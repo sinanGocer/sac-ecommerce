@@ -3,6 +3,7 @@ import {
   PricingDecision,
   RawProduct,
 } from "../types/product-sync.types"
+import { CategoryMappingService } from "../services/category-mapping.service"
 
 /**
  * Ham ürünü + fiyat kararını Medusa'ya yazıma hazır taslağa dönüştürür.
@@ -11,6 +12,10 @@ import {
  * - review gereken ürün "proposed" statüsünde kalır.
  */
 export class MedusaProductTransformer {
+  constructor(
+    private readonly categories: CategoryMappingService = new CategoryMappingService()
+  ) {}
+
   transform(
     product: RawProduct,
     pricing: PricingDecision
@@ -26,17 +31,17 @@ export class MedusaProductTransformer {
       ? "proposed"
       : "draft"
 
+    const categoryPath = this.categories.resolve(product)
+    const syncMetadata = this.categories.buildMetadata(product)
+
     const metadata: MedusaProductDraft["metadata"] = {
       sync_provider: "aveda",
-      external_id: product.externalId,
-      source_url: product.sourceUrl,
-      brand: product.brand,
-      category: product.category,
-      sub_category: product.subCategory,
+      ...syncMetadata,
+      source_category: product.category,
+      source_subcategory: product.subCategory,
+      sub_category: syncMetadata.subcategory,
       volume: product.volume,
       sku: product.sku,
-      ingredients: product.ingredients,
-      usage: product.usage,
       stock_status: product.stockStatus,
       // Fiyat politikası kayıtları
       list_price: pricing.medusaPrice,
@@ -62,6 +67,7 @@ export class MedusaProductTransformer {
       description,
       status,
       categoryName: product.category,
+      categoryPath,
       images: product.images,
       currency: product.currency,
       price: pricing.medusaPrice,

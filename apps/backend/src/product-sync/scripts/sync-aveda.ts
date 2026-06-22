@@ -3,10 +3,7 @@ import {
   ContainerRegistrationKeys,
   ProductStatus,
 } from "@medusajs/framework/utils"
-import {
-  createProductCategoriesWorkflow,
-  createProductsWorkflow,
-} from "@medusajs/medusa/core-flows"
+import { createProductsWorkflow } from "@medusajs/medusa/core-flows"
 
 import { AvedaProvider } from "../providers/aveda.provider"
 import {
@@ -14,6 +11,8 @@ import {
   FindExistingFn,
   SyncService,
 } from "../services/sync.service"
+import { AVEDA_PRODUCT_CATALOG_TREE } from "../../product-catalog/architecture"
+import { ProductCatalogCategoryService } from "../../product-catalog/services/product-catalog-category.service"
 import { MedusaProductDraft, SyncLogger } from "../types/product-sync.types"
 
 /**
@@ -116,35 +115,9 @@ async function buildCommitProductFn(
     throw new Error("Medusa shipping profile bulunamadı.")
   }
 
-  const categoryIdCache = new Map<string, string>()
-
-  const getCategoryId = async (name: string | null): Promise<string | null> => {
-    if (!name) return null
-    const normalized = name.trim()
-    if (!normalized) return null
-    const cached = categoryIdCache.get(normalized)
-    if (cached) return cached
-
-    const { data: existingCategories } = await query.graph({
-      entity: "product_category",
-      fields: ["id", "name"],
-    })
-    const existing = existingCategories.find((c) => c.name === normalized)
-    if (existing) {
-      categoryIdCache.set(normalized, existing.id)
-      return existing.id
-    }
-
-    logger.info(`[sync:aveda] Kategori oluşturuluyor: ${normalized}`)
-    const { result } = await createProductCategoriesWorkflow(container).run({
-      input: {
-        product_categories: [{ name: normalized, is_active: true }],
-      },
-    })
-    const created = result[0]
-    categoryIdCache.set(normalized, created.id)
-    return created.id
-  }
+  const categoryService = new ProductCatalogCategoryService(container, logger)
+  const categoryResult = await categoryService.ensureTree(AVEDA_PRODUCT_CATALOG_TREE)
+  const categoryIds = categoryResult.idByExternalId
 
   return async (draft: MedusaProductDraft, action) => {
     if (action === "update") {
@@ -158,7 +131,9 @@ async function buildCommitProductFn(
       throw new Error(`Fiyatı olmayan ürün commit edilemez: ${draft.title}`)
     }
 
-    const categoryId = await getCategoryId(draft.categoryName)
+    const categoryId = draft.categoryPath
+      ? categoryIds.get(draft.categoryPath.externalId) ?? null
+      : null
     const optionTitle = "Seçenek"
     const variants = draft.variants.map((variant, index) => {
       const variantPrice = variant.price ?? draft.price

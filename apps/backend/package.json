@@ -15,7 +15,11 @@
   "scripts": {
     "sync:aveda:dry": "SYNC_DRY_RUN=true SYNC_LIMIT=5 medusa exec ./src/product-sync/scripts/sync-aveda.ts",
     "sync:aveda": "medusa exec ./src/product-sync/scripts/sync-aveda.ts",
+    "sync:aveda:analyze-categories": "medusa exec ./src/product-sync/scripts/analyze-aveda-categories.ts",
     "sync:all": "medusa exec ./src/product-sync/scripts/sync-all.ts",
+    "sync:categories": "medusa exec ./src/product-sync/scripts/bootstrap-categories.ts",
+    "catalog:bootstrap": "medusa exec ./src/product-catalog/scripts/bootstrap-product-catalog.ts",
+    "catalog:verify": "medusa exec ./src/product-catalog/scripts/verify-product-catalog.ts",
     "sync:report": "medusa exec ./src/product-sync/scripts/sync-report.ts",
     "sync:approve": "medusa exec ./src/product-sync/scripts/approve-price-change.ts",
     "sync:reject": "medusa exec ./src/product-sync/scripts/reject-price-change.ts",

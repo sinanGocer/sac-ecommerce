@@ -13,6 +13,41 @@ export interface SyncLogger {
 /** Para birimi (v1: yalnızca TRY). */
 export type CurrencyCode = "try"
 
+/** Brand altında çözümlenmiş nested kategori yolu. */
+export interface ProductCategoryPath {
+  brand: string
+  path: string[]
+  leaf: string
+  externalId: string
+}
+
+export interface ProductSyncMetadata {
+  brand: string
+  category: string | null
+  subcategory: string | null
+  hair_type: string[]
+  concerns: string[]
+  benefits: string[]
+  size_ml: number | null
+  vegan: boolean | null
+  color_safe: boolean | null
+  ingredients: string | null
+  usage: string | null
+  is_gift_set: boolean
+  size_type: "travel" | "full_size" | null
+  limited_edition: boolean
+  source_url: string
+  external_id: string
+  original_category_path: string | null
+  product_type: string | null
+  usage_category: string | null
+  hair_type_primary: string | null
+  hair_concern: string | null
+  collection: string | null
+  category_path: string | null
+  category_external_id: string | null
+}
+
 /** Sağlayıcıdan gelen ham varyant. */
 export interface RawVariant {
   title: string
@@ -83,11 +118,12 @@ export interface MedusaProductDraft {
   description: string | null
   status: "draft" | "proposed"
   categoryName: string | null
+  categoryPath: ProductCategoryPath | null
   images: string[]
   currency: CurrencyCode
   /** Politika sonrası fiyat (null ise review). */
   price: number | null
-  metadata: Record<string, string | number | boolean | null>
+  metadata: Record<string, string | number | boolean | string[] | null>
   variants: Array<{
     title: string
     sku: string | null

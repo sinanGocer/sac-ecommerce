@@ -133,8 +133,7 @@ export class SyncService {
         )
 
         const action = await this.decideAction(
-          draft.externalId,
-          draft.sourceUrl,
+          draft,
           pricing,
           findExisting
         )
@@ -207,18 +206,20 @@ export class SyncService {
   }
 
   private async decideAction(
-    externalId: string,
-    sourceUrl: string,
+    draft: MedusaProductDraft,
     pricing: PricingDecision,
     findExisting?: FindExistingFn
   ): Promise<SyncAction> {
     if (pricing.reviewRequired) {
       return "review"
     }
+    if (!draft.categoryPath) {
+      return "review"
+    }
     if (!findExisting) {
       return "create"
     }
-    const exists = await findExisting(externalId, sourceUrl)
+    const exists = await findExisting(draft.externalId, draft.sourceUrl)
     return exists ? "update" : "create"
   }
 
