@@ -23,6 +23,7 @@
     "sync:report": "medusa exec ./src/product-sync/scripts/sync-report.ts",
     "sync:approve": "medusa exec ./src/product-sync/scripts/approve-price-change.ts",
     "sync:reject": "medusa exec ./src/product-sync/scripts/reject-price-change.ts",
+    "product:aveda:metadata-v2:dry": "medusa exec ./src/product-sync/scripts/aveda-metadata-v2-dry.ts",
     "search:backfill:dry": "medusa exec ./src/modules/search-projection/scripts/search-backfill.ts",
     "search:backfill": "SEARCH_COMMIT=true medusa exec ./src/modules/search-projection/scripts/search-backfill.ts",
     "build": "medusa build",

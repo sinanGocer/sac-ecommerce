@@ -30,3 +30,6 @@ build
 
 # Search Projection — dry-run raporları
 /search-reports
+
+# Metadata V2 Enrichment Planner — dry-run raporları
+/metadata-v2-reports
