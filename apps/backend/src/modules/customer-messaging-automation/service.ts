@@ -214,7 +214,7 @@ class CustomerMessagingAutomationService extends MedusaService({
       }
     )
 
-    const results = []
+    const results: Awaited<ReturnType<typeof this.sendScheduledMessage>>[] = []
 
     for (const message of pending) {
       results.push(await this.sendScheduledMessage(message.id))

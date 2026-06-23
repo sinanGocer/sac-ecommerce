@@ -1,4 +1,4 @@
-import { ExecArgs } from "@medusajs/framework/types"
+import { ExecArgs, ProductCategoryDTO } from "@medusajs/framework/types"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import {
   createProductCategoriesWorkflow,
@@ -241,7 +241,14 @@ export class ProductCatalogCategoryService {
       ],
     })
 
-    return data.map((category) => ({
+    // query.graph "product_category" tipinde external_id eksik olabiliyor;
+    // alan gerçekte mevcut (ProductCategoryDTO). Seçtiğimiz alanlara dair güvenli tip.
+    type CategoryRow = Pick<
+      ProductCategoryDTO,
+      "id" | "name" | "handle" | "parent_category_id" | "external_id" | "metadata"
+    >
+
+    return (data as unknown as CategoryRow[]).map((category) => ({
       id: category.id,
       name: category.name,
       handle: category.handle,

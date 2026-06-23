@@ -1,10 +1,17 @@
 import { promises as fs } from "fs"
 import path from "path"
 
-import { ExecArgs } from "@medusajs/framework/types"
+import { ExecArgs, ProductCategoryDTO } from "@medusajs/framework/types"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 
 import { REPORTS_DIR } from "../../product-sync/services/sync.service"
+
+// query.graph "product_category" dönüş tipinde external_id eksik olabiliyor;
+// alan gerçekte mevcut (ProductCategoryDTO). Seçtiğimiz alanlara dair güvenli tip.
+type CategoryRow = Pick<
+  ProductCategoryDTO,
+  "id" | "name" | "handle" | "parent_category_id" | "external_id"
+>
 
 export default async function verifyProductCatalog({ container }: ExecArgs) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
@@ -14,9 +21,9 @@ export default async function verifyProductCatalog({ container }: ExecArgs) {
     fields: ["id", "name", "handle", "parent_category_id", "external_id"],
   })
 
-  const managed = data
+  const managed = (data as unknown as CategoryRow[])
     .filter(
-      (category) =>
+      (category): category is CategoryRow & { external_id: string } =>
         typeof category.external_id === "string" &&
         category.external_id.startsWith("product-catalog:category:")
     )

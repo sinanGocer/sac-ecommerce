@@ -58,7 +58,9 @@ export default async function salonSeed({ container }: ExecArgs) {
 
   // 2) Store'a TRY ekle ve varsayılan yap (mevcut para birimlerini koru)
   logger.info("TRY para birimi ekleniyor...")
-  const existing = store.supported_currencies.map((c) => c.currency_code)
+  const existing = (store.supported_currencies ?? [])
+    .map((c) => c?.currency_code)
+    .filter((code): code is string => typeof code === "string")
   const supported_currencies = [
     { currency_code: "try", is_default: true },
     ...existing
@@ -74,7 +76,9 @@ export default async function salonSeed({ container }: ExecArgs) {
     entity: "region",
     fields: ["id", "name"],
   })
-  let turkeyRegion = regions.find((r) => r.name === "Türkiye")
+  let turkeyRegion: { id: string; name: string } | undefined = regions.find(
+    (r) => r.name === "Türkiye"
+  )
   if (!turkeyRegion) {
     logger.info("Türkiye region'ı oluşturuluyor...")
     const { result } = await createRegionsWorkflow(container).run({
@@ -216,8 +220,8 @@ export default async function salonSeed({ container }: ExecArgs) {
   })
   const itemsWithoutLevel = inventoryItems.filter(
     (item) =>
-      !(item.location_levels ?? []).some(
-        (l: { location_id: string }) => l.location_id === stockLocation.id
+      !(item?.location_levels ?? []).some(
+        (l) => l?.location_id === stockLocation.id
       )
   )
   if (itemsWithoutLevel.length) {

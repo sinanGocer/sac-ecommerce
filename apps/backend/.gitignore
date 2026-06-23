@@ -27,3 +27,6 @@ build
 
 # Product Sync Engine — üretilen raporlar
 /sync-reports
+
+# Search Projection — dry-run raporları
+/search-reports

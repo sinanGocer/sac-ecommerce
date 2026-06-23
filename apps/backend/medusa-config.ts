@@ -17,5 +17,8 @@ module.exports = defineConfig({
     {
       resolve: "./src/modules/customer-messaging-automation",
     },
+    {
+      resolve: "./src/modules/search-projection",
+    },
   ],
 })
