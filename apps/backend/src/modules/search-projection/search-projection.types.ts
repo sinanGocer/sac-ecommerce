@@ -58,7 +58,8 @@ export const FIELD_SOURCE_MAP: Record<string, string> = {
   professional_only: "metadata.professional_only (yoksa false)",
   price: "medusa.variant.prices[currency].amount (en düşük)",
   currency: "build option (varsayılan try)",
-  in_stock: "medusa.variant.manage_inventory/inventory_quantity",
+  in_stock:
+    "normalized variant availability (manage_inventory/allow_backorder/inventory levels)",
   thumbnail: "medusa.product.thumbnail",
   created_at: "PROJECTION satır yaşam döngüsü (DB-managed; builder set etmez)",
   updated_at: "PROJECTION satır yaşam döngüsü (DB-managed; builder set etmez)",
@@ -129,8 +130,9 @@ export interface SearchProjection {
 /** Builder girdisi — Medusa'dan DECOUPLE edilmiş hafif şekil (test edilebilir). */
 export interface BuilderVariantInput {
   prices: Array<{ amount: number; currency_code: string }>
-  inventory_quantity: number | null
   manage_inventory: boolean | null
+  allow_backorder: boolean | null
+  is_available: boolean | null
 }
 
 export interface BuilderCategoryInput {

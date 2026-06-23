@@ -8,6 +8,7 @@ import { buildSearchProjection } from "../projection-builder"
 import {
   PRODUCT_GRAPH_FIELDS,
   ProductGraphRow,
+  VariantAvailabilityMap,
   toBuilderInput,
 } from "../projection-mapper"
 import { PROJECTION_SCHEMA_VERSION, SearchProjection } from "../search-projection.types"
@@ -34,6 +35,32 @@ import { SEARCH_PROJECTION_MODULE } from ".."
 
 const SEARCH_REPORTS_DIR = path.resolve(process.cwd(), "search-reports")
 
+interface SalesChannelRow {
+  id: string
+  name?: string | null
+  is_disabled?: boolean | null
+}
+
+interface VariantInventoryLinkRow {
+  variant_id?: string | null
+  required_quantity?: number | null
+  inventory?: {
+    location_levels?: Array<{
+      location_id?: string | null
+      stocked_quantity?: number | string | null
+      reserved_quantity?: number | string | null
+    }> | null
+  } | null
+}
+
+interface SalesChannelLocationRow {
+  stock_location_id?: string | null
+}
+
+type QueryGraph = {
+  graph: (args: unknown, options?: unknown) => Promise<{ data?: unknown[] }>
+}
+
 export default async function searchBackfill({ container }: ExecArgs) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
@@ -47,6 +74,7 @@ export default async function searchBackfill({ container }: ExecArgs) {
   const parsedLimit = limitEnv ? parseInt(limitEnv, 10) : NaN
   const maxItems =
     Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : null
+  const salesChannelId = await resolveSalesChannelId(query)
 
   let writer: ProjectionWriter | null = null
   if (commit) {
@@ -55,9 +83,18 @@ export default async function searchBackfill({ container }: ExecArgs) {
     )
     writer = new ProjectionWriter(service)
   }
+  const stockLocationIds = await stockLocationIdsForSalesChannel(
+    query,
+    salesChannelId
+  )
+  if (stockLocationIds.size === 0) {
+    throw new Error(
+      `[search:backfill] Sales channel için stock location bulunamadı: ${salesChannelId}`
+    )
+  }
 
   logger.info(
-    `[search:backfill] mod=${commit ? "COMMIT" : "DRY-RUN"} batch=${take} limit=${maxItems ?? "∞"} currency=${currency} schema_v=${PROJECTION_SCHEMA_VERSION}`
+    `[search:backfill] mod=${commit ? "COMMIT" : "DRY-RUN"} batch=${take} limit=${maxItems ?? "∞"} currency=${currency} schema_v=${PROJECTION_SCHEMA_VERSION} sales_channel=${salesChannelId}`
   )
 
   const missing: Record<string, number> = {
@@ -80,6 +117,13 @@ export default async function searchBackfill({ container }: ExecArgs) {
   let withPrice = 0
   let inStock = 0
   const metadataVersionDistribution: Record<string, number> = {}
+  const inventoryDiagnostics = {
+    sales_channel_id: salesChannelId,
+    stock_location_count: stockLocationIds.size,
+    batches: 0,
+    variant_ids_checked: 0,
+    availability_entries: 0,
+  }
   let createdTotal = 0
   let updatedTotal = 0
   let skip = 0
@@ -96,10 +140,23 @@ export default async function searchBackfill({ container }: ExecArgs) {
     const rows = (result.data ?? []) as ProductGraphRow[]
     if (rows.length === 0) break
 
+    const variantIds = variantIdsFromRows(rows)
+    const availabilityByVariantId = await buildVariantAvailabilityMap(
+      query,
+      variantIds,
+      stockLocationIds
+    )
+    inventoryDiagnostics.batches++
+    inventoryDiagnostics.variant_ids_checked += variantIds.length
+    inventoryDiagnostics.availability_entries += availabilityByVariantId.size
+
     const batchProjections: SearchProjection[] = []
 
     for (const row of rows) {
-      const projection = buildSearchProjection(toBuilderInput(row), { currency })
+      const projection = buildSearchProjection(
+        toBuilderInput(row, availabilityByVariantId),
+        { currency }
+      )
       batchProjections.push(projection)
 
       processed++
@@ -160,6 +217,7 @@ export default async function searchBackfill({ container }: ExecArgs) {
       updated: updatedTotal,
     },
     metadata_version_distribution: metadataVersionDistribution,
+    inventory_availability: inventoryDiagnostics,
     missing_or_empty_fields: missing,
     no_source_fields: [
       "average_rating",
@@ -186,4 +244,144 @@ export default async function searchBackfill({ container }: ExecArgs) {
     `mod=${commit ? "COMMIT" : "DRY-RUN"} | işlenen: ${processed} | fiyatlı: ${withPrice} | stokta: ${inStock} | DB'ye yazıldı: ${commit ? `EVET (create=${createdTotal}, update=${updatedTotal})` : "HAYIR"}`
   )
   logger.info(`Rapor: search-reports/search-backfill-latest.json`)
+}
+
+function variantIdsFromRows(rows: ProductGraphRow[]): string[] {
+  const ids = new Set<string>()
+  for (const row of rows) {
+    for (const variant of row.variants ?? []) {
+      if (typeof variant.id === "string" && variant.id.length > 0) {
+        ids.add(variant.id)
+      }
+    }
+  }
+  return [...ids]
+}
+
+async function resolveSalesChannelId(query: {
+  graph: (args: unknown, options?: unknown) => Promise<{ data?: unknown[] }>
+}): Promise<string> {
+  const configured = process.env.SEARCH_SALES_CHANNEL_ID?.trim()
+  if (configured) return configured
+
+  const result = await query.graph({
+    entity: "sales_channel",
+    fields: ["id", "name", "is_disabled"],
+  })
+  const channels = ((result.data ?? []) as SalesChannelRow[]).filter(
+    (channel) => channel.is_disabled !== true
+  )
+
+  if (channels.length === 1) return channels[0].id
+
+  throw new Error(
+    `[search:backfill] Sales channel seçilemedi. SEARCH_SALES_CHANNEL_ID verin veya tek aktif sales channel bırakın; yanlış stok pozitifliği üretmemek için dry-run durduruldu. active_sales_channels=${channels.length}`
+  )
+}
+
+async function buildVariantAvailabilityMap(
+  query: QueryGraph,
+  variantIds: string[],
+  locationIds: Set<string>
+): Promise<VariantAvailabilityMap> {
+  const availability = new Map<string, boolean>()
+  if (variantIds.length === 0) return availability
+
+  const result = await query.graph(
+    {
+      entity: "product_variant_inventory_items",
+      fields: [
+        "variant_id",
+        "required_quantity",
+        "inventory.location_levels.location_id",
+        "inventory.location_levels.stocked_quantity",
+        "inventory.location_levels.reserved_quantity",
+      ],
+      filters: { variant_id: variantIds },
+    },
+    { cache: { enable: true } }
+  )
+
+  const linksByVariantId = new Map<string, VariantInventoryLinkRow[]>()
+  for (const link of (result.data ?? []) as VariantInventoryLinkRow[]) {
+    if (typeof link.variant_id !== "string") continue
+    const links = linksByVariantId.get(link.variant_id) ?? []
+    links.push(link)
+    linksByVariantId.set(link.variant_id, links)
+  }
+
+  for (const variantId of variantIds) {
+    const links = linksByVariantId.get(variantId) ?? []
+    availability.set(variantId, variantCapacity(links, locationIds) > 0)
+  }
+
+  return availability
+}
+
+async function stockLocationIdsForSalesChannel(
+  query: QueryGraph,
+  salesChannelId: string
+): Promise<Set<string>> {
+  const result = await query.graph(
+    {
+      entity: "sales_channel_locations",
+      fields: ["stock_location_id"],
+      filters: { sales_channel_id: salesChannelId },
+    },
+    {
+      cache: {
+        tags: [`SalesChannel:${salesChannelId}`, "StockLocation:list:*"],
+      },
+    }
+  )
+
+  return new Set(
+    ((result.data ?? []) as SalesChannelLocationRow[])
+      .map((row) => row.stock_location_id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+  )
+}
+
+function variantCapacity(
+  links: VariantInventoryLinkRow[],
+  locationIds: Set<string>
+): number {
+  if (links.length === 0) return 0
+
+  let capacity: number | null = null
+  for (const link of links) {
+    const requiredQuantity = toPositiveNumber(link.required_quantity)
+    if (requiredQuantity === null) return 0
+
+    const available = (link.inventory?.location_levels ?? []).reduce(
+      (sum, level) => {
+        const locationId = level.location_id
+        if (typeof locationId !== "string" || !locationIds.has(locationId)) {
+          return sum
+        }
+        const stocked = toNumber(level.stocked_quantity) ?? 0
+        const reserved = toNumber(level.reserved_quantity) ?? 0
+        return sum + Math.max(0, stocked - reserved)
+      },
+      0
+    )
+    const itemCapacity = Math.floor(available / requiredQuantity)
+    capacity = capacity === null ? itemCapacity : Math.min(capacity, itemCapacity)
+  }
+
+  return capacity ?? 0
+}
+
+function toPositiveNumber(value: unknown): number | null {
+  const n = toNumber(value)
+  return n !== null && n > 0 ? n : null
+}
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string" && value.trim().length > 0) {
+    const n = Number.parseFloat(value)
+    if (Number.isFinite(n)) return n
+  }
+  return null
 }

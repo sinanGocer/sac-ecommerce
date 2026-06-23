@@ -21,10 +21,11 @@ export const PRODUCT_GRAPH_FIELDS = [
   "categories.name",
   "categories.handle",
   "categories.external_id",
+  "variants.id",
   "variants.prices.amount",
   "variants.prices.currency_code",
   "variants.manage_inventory",
-  "variants.inventory_quantity",
+  "variants.allow_backorder",
 ] as const
 
 interface RawPrice {
@@ -32,9 +33,10 @@ interface RawPrice {
   currency_code?: string
 }
 interface RawVariant {
+  id?: string | null
   prices?: RawPrice[]
   manage_inventory?: boolean | null
-  inventory_quantity?: number | null
+  allow_backorder?: boolean | null
 }
 export interface ProductGraphRow {
   id: string
@@ -54,7 +56,12 @@ export interface ProductGraphRow {
   variants?: RawVariant[] | null
 }
 
-export function toBuilderInput(row: ProductGraphRow): BuilderProductInput {
+export type VariantAvailabilityMap = Map<string, boolean>
+
+export function toBuilderInput(
+  row: ProductGraphRow,
+  availabilityByVariantId: VariantAvailabilityMap = new Map()
+): BuilderProductInput {
   const variants = (row.variants ?? []).map((v) => ({
     prices: (v.prices ?? [])
       .filter(
@@ -62,8 +69,12 @@ export function toBuilderInput(row: ProductGraphRow): BuilderProductInput {
           typeof p.amount === "number" && typeof p.currency_code === "string"
       )
       .map((p) => ({ amount: p.amount, currency_code: p.currency_code })),
-    inventory_quantity: v.inventory_quantity ?? null,
     manage_inventory: v.manage_inventory ?? null,
+    allow_backorder: v.allow_backorder ?? null,
+    is_available:
+      typeof v.id === "string"
+        ? availabilityByVariantId.get(v.id) ?? null
+        : null,
   }))
 
   return {

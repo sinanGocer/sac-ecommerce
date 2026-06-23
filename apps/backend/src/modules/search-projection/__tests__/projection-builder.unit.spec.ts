@@ -40,13 +40,15 @@ const baseInput: BuilderProductInput = {
         { amount: 520, currency_code: "try" },
         { amount: 18, currency_code: "usd" },
       ],
-      inventory_quantity: null,
       manage_inventory: false,
+      allow_backorder: false,
+      is_available: null,
     },
     {
       prices: [{ amount: 480, currency_code: "TRY" }],
-      inventory_quantity: 0,
       manage_inventory: true,
+      allow_backorder: false,
+      is_available: false,
     },
   ],
 }
@@ -90,13 +92,46 @@ describe("buildSearchProjection", () => {
       variants: [
         {
           prices: [{ amount: 100, currency_code: "try" }],
-          inventory_quantity: 0,
           manage_inventory: true,
+          allow_backorder: false,
+          is_available: false,
         },
       ],
     }
     const p = buildSearchProjection(input)
     expect(p.in_stock).toBe(false)
+  })
+
+  it("yönetilen stok için hazır is_available=true ise stokta sayar", () => {
+    const input: BuilderProductInput = {
+      ...baseInput,
+      variants: [
+        {
+          prices: [{ amount: 100, currency_code: "try" }],
+          manage_inventory: true,
+          allow_backorder: false,
+          is_available: true,
+        },
+      ],
+    }
+    const p = buildSearchProjection(input)
+    expect(p.in_stock).toBe(true)
+  })
+
+  it("allow_backorder=true ise hazır availability false olsa bile stokta sayar", () => {
+    const input: BuilderProductInput = {
+      ...baseInput,
+      variants: [
+        {
+          prices: [{ amount: 100, currency_code: "try" }],
+          manage_inventory: true,
+          allow_backorder: true,
+          is_available: false,
+        },
+      ],
+    }
+    const p = buildSearchProjection(input)
+    expect(p.in_stock).toBe(true)
   })
 
   it("kaynağı olmayan skor alanları uydurulmaz (açık varsayılan)", () => {

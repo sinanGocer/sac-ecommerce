@@ -91,11 +91,10 @@ function lowestPrice(
 }
 
 function isInStock(product: BuilderProductInput): boolean {
-  // Stok yönetimi kapalı varyant her zaman "stokta" sayılır;
-  // açıksa inventory_quantity > 0 gerekir.
   return product.variants.some((v) => {
     if (v.manage_inventory === false) return true
-    return (v.inventory_quantity ?? 0) > 0
+    if (v.allow_backorder === true) return true
+    return v.is_available === true
   })
 }
 
