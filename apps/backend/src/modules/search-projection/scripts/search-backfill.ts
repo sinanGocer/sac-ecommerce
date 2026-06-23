@@ -65,6 +65,7 @@ export default async function searchBackfill({ container }: ExecArgs) {
     brand: 0,
     category_ids: 0,
     category_path: 0,
+    subcategory: 0,
     hair_type: 0,
     concerns: 0,
     benefits: 0,
@@ -78,6 +79,7 @@ export default async function searchBackfill({ container }: ExecArgs) {
   let processed = 0
   let withPrice = 0
   let inStock = 0
+  const metadataVersionDistribution: Record<string, number> = {}
   let createdTotal = 0
   let updatedTotal = 0
   let skip = 0
@@ -108,6 +110,7 @@ export default async function searchBackfill({ container }: ExecArgs) {
       if (projection.brand === null) missing.brand++
       if (projection.category_ids.length === 0) missing.category_ids++
       if (projection.category_path === null) missing.category_path++
+      if (projection.subcategory === null) missing.subcategory++
       if (projection.hair_type.length === 0) missing.hair_type++
       if (projection.concerns.length === 0) missing.concerns++
       if (projection.benefits.length === 0) missing.benefits++
@@ -116,6 +119,9 @@ export default async function searchBackfill({ container }: ExecArgs) {
       if (projection.color_safe === null) missing.color_safe++
       if (projection.price === null) missing.price++
       if (projection.thumbnail === null) missing.thumbnail++
+      const metadataVersion = String(projection.metadata_version)
+      metadataVersionDistribution[metadataVersion] =
+        (metadataVersionDistribution[metadataVersion] ?? 0) + 1
 
       if (sample.length < 3) sample.push(projection)
     }
@@ -153,6 +159,7 @@ export default async function searchBackfill({ container }: ExecArgs) {
       created: createdTotal,
       updated: updatedTotal,
     },
+    metadata_version_distribution: metadataVersionDistribution,
     missing_or_empty_fields: missing,
     no_source_fields: [
       "average_rating",

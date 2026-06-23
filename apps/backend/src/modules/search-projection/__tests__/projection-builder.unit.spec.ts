@@ -12,6 +12,14 @@ const baseInput: BuilderProductInput = {
   created_at: "2026-06-22T10:00:00.000Z",
   updated_at: "2026-06-22T11:00:00.000Z",
   category_ids: ["cat_1", "cat_2"],
+  categories: [
+    {
+      id: "cat_1",
+      name: "Şampuan",
+      handle: "sampuan",
+      external_id: "product-catalog:category:aveda/sac-bakim/sampuan",
+    },
+  ],
   collection_title: null,
   metadata: {
     external_id: "62089",
@@ -146,6 +154,7 @@ describe("buildSearchProjection", () => {
       created_at: null,
       updated_at: null,
       category_ids: [],
+      categories: [],
       collection_title: null,
       metadata: null,
       variants: [],
@@ -159,5 +168,226 @@ describe("buildSearchProjection", () => {
     expect(p.source_updated_at).toBeNull()
     expect(p.metadata_version).toBe(1)
     expect(p.projection_schema_version).toBe(1)
+  })
+
+  it("subcategory için canonical alan eski alanın önüne geçer", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: {
+        ...baseInput.metadata,
+        subcategory: "canonical",
+        sub_category: "legacy",
+      },
+    })
+
+    expect(p.subcategory).toBe("canonical")
+  })
+
+  it("canonical subcategory yoksa legacy sub_category kullanır", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: {
+        ...baseInput.metadata,
+        subcategory: undefined,
+        sub_category: "legacy",
+      },
+    })
+
+    expect(p.subcategory).toBe("legacy")
+  })
+
+  it("subcategory ve sub_category yoksa null döner", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: {
+        ...baseInput.metadata,
+        subcategory: undefined,
+        sub_category: undefined,
+      },
+    })
+
+    expect(p.subcategory).toBeNull()
+  })
+
+  it("canonical numeric size_ml değerini kullanır", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: { ...baseInput.metadata, size_ml: 300, volume: "200 ml" },
+    })
+
+    expect(p.size_ml).toBe(300)
+  })
+
+  it("numeric volume fallback değerini kullanır", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: { ...baseInput.metadata, size_ml: undefined, volume: 200 },
+    })
+
+    expect(p.size_ml).toBe(200)
+  })
+
+  it("string numeric volume fallback değerini kullanır", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: { ...baseInput.metadata, size_ml: undefined, volume: "200" },
+    })
+
+    expect(p.size_ml).toBe(200)
+  })
+
+  it("ml biçimli volume fallback değerlerini kullanır", () => {
+    expect(
+      buildSearchProjection({
+        ...baseInput,
+        metadata: { ...baseInput.metadata, size_ml: undefined, volume: "200 ml" },
+      }).size_ml
+    ).toBe(200)
+    expect(
+      buildSearchProjection({
+        ...baseInput,
+        metadata: { ...baseInput.metadata, size_ml: undefined, volume: "200ml" },
+      }).size_ml
+    ).toBe(200)
+  })
+
+  it("litre biçimli açık volume fallback değerlerini ml'ye çevirir", () => {
+    expect(
+      buildSearchProjection({
+        ...baseInput,
+        metadata: { ...baseInput.metadata, size_ml: undefined, volume: "0.5 L" },
+      }).size_ml
+    ).toBe(500)
+    expect(
+      buildSearchProjection({
+        ...baseInput,
+        metadata: { ...baseInput.metadata, size_ml: undefined, volume: "0,5 L" },
+      }).size_ml
+    ).toBe(500)
+  })
+
+  it("belirsiz, sıfır, negatif ve makul üst sınır dışı size değerlerini null bırakır", () => {
+    for (const volume of ["200/500 ml", "set", "0", "-200", "10001 ml"]) {
+      const p = buildSearchProjection({
+        ...baseInput,
+        metadata: { ...baseInput.metadata, size_ml: undefined, volume },
+      })
+
+      expect(p.size_ml).toBeNull()
+    }
+  })
+
+  it("metadata category_path varsa relation fallback kullanılmaz", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: {
+        ...baseInput.metadata,
+        category_path: "metadata/path",
+      },
+      categories: [
+        {
+          id: "cat_1",
+          name: "Relation",
+          handle: "relation-path",
+          external_id: "product-catalog:category:relation/path",
+        },
+      ],
+    })
+
+    expect(p.category_path).toBe("metadata/path")
+  })
+
+  it("güvenli tek kategori relation fallback'i kullanır", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: { ...baseInput.metadata, category_path: undefined },
+      categories: [
+        {
+          id: "cat_1",
+          name: "Şampuan",
+          handle: "sampuan",
+          external_id: "product-catalog:category:aveda/sac-bakim/sampuan",
+        },
+      ],
+    })
+
+    expect(p.category_path).toBe("aveda/sac-bakim/sampuan")
+  })
+
+  it("kategori sırası değişse bile aynı deterministik sonucu üretir", () => {
+    const categories = [
+      {
+        id: "cat_without_path",
+        name: null,
+        handle: null,
+        external_id: null,
+      },
+      {
+        id: "cat_with_path",
+        name: "Şampuan",
+        handle: "sampuan",
+        external_id: "product-catalog:category:aveda/sac-bakim/sampuan",
+      },
+    ]
+    const first = buildSearchProjection({
+      ...baseInput,
+      metadata: { ...baseInput.metadata, category_path: undefined },
+      categories,
+    })
+    const second = buildSearchProjection({
+      ...baseInput,
+      metadata: { ...baseInput.metadata, category_path: undefined },
+      categories: [...categories].reverse(),
+    })
+
+    expect(first.category_path).toBe("aveda/sac-bakim/sampuan")
+    expect(second.category_path).toBe(first.category_path)
+  })
+
+  it("güvenilir tek category_path üretilemiyorsa null bırakır", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: { ...baseInput.metadata, category_path: undefined },
+      categories: [
+        {
+          id: "cat_1",
+          name: "Şampuan",
+          handle: "sampuan",
+          external_id: "product-catalog:category:aveda/sac-bakim/sampuan",
+        },
+        {
+          id: "cat_2",
+          name: "Maske",
+          handle: "maske",
+          external_id: "product-catalog:category:aveda/sac-bakim/maske",
+        },
+      ],
+    })
+
+    expect(p.category_path).toBeNull()
+  })
+
+  it("kaynak metadata_version 2 ise 2 kullanır", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: { ...baseInput.metadata, metadata_version: 2 },
+    })
+
+    expect(p.metadata_version).toBe(2)
+  })
+
+  it("kaynak metadata_version yoksa alanlar dolu olsa bile 1 kalır", () => {
+    const p = buildSearchProjection({
+      ...baseInput,
+      metadata: {
+        ...baseInput.metadata,
+        metadata_version: undefined,
+        subcategory: "sampuan",
+        size_ml: 250,
+        category_path: "aveda/sac-bakim/sampuan",
+      },
+    })
+
+    expect(p.metadata_version).toBe(1)
   })
 })

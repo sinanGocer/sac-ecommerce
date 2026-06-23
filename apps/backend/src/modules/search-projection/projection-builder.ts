@@ -1,10 +1,13 @@
 import {
   BuilderProductInput,
   BuildProjectionOptions,
+  BuilderCategoryInput,
   NO_SOURCE_DEFAULTS,
   PROJECTION_SCHEMA_VERSION,
   SearchProjection,
 } from "./search-projection.types"
+
+const MAX_REASONABLE_SIZE_ML = 10_000
 
 /**
  * Saf (yan etkisiz) projection builder.
@@ -29,14 +32,16 @@ export function buildSearchProjection(
 
     brand: getString(meta, "brand"),
     category_ids: normalizeStringArray(product.category_ids),
-    category_path: getString(meta, "category_path"),
-    subcategory: getString(meta, "subcategory"),
+    category_path:
+      getString(meta, "category_path") ??
+      categoryPathFromRelations(product.categories ?? []),
+    subcategory: getString(meta, "subcategory") ?? getString(meta, "sub_category"),
     collection:
       getString(meta, "collection") ?? nullableString(product.collection_title),
     hair_type: getStringArray(meta, "hair_type"),
     concerns: getStringArray(meta, "concerns"),
     benefits: getStringArray(meta, "benefits"),
-    size_ml: getNumber(meta, "size_ml"),
+    size_ml: getPositiveInteger(meta, "size_ml") ?? parseVolumeToMl(meta.volume),
     vegan: getBoolean(meta, "vegan"),
     color_safe: getBoolean(meta, "color_safe"),
     // Kaynağı yoksa güvenli varsayılan: false (uydurma yok)
@@ -126,6 +131,13 @@ function normalizeStringArray(v: unknown): string[] {
   return out
 }
 
+function getPositiveInteger(
+  meta: Record<string, unknown>,
+  key: string
+): number | null {
+  return normalizeSizeMl(meta[key])
+}
+
 function getNumber(meta: Record<string, unknown>, key: string): number | null {
   const v = meta[key]
   if (typeof v === "number" && Number.isFinite(v)) return v
@@ -134,6 +146,71 @@ function getNumber(meta: Record<string, unknown>, key: string): number | null {
     if (Number.isFinite(n)) return n
   }
   return null
+}
+
+function parseVolumeToMl(v: unknown): number | null {
+  return normalizeSizeMl(v)
+}
+
+function normalizeSizeMl(v: unknown): number | null {
+  if (typeof v === "number") return validSizeMl(v)
+  if (typeof v !== "string") return null
+
+  const raw = v.trim()
+  if (raw.length === 0) return null
+
+  const numericOnly = raw.match(/^\d+(?:[.,]\d+)?$/)
+  if (numericOnly) {
+    return validSizeMl(Number.parseFloat(raw.replace(",", ".")))
+  }
+
+  const ml = raw.match(/^(\d+(?:[.,]\d+)?)\s*ml$/i)
+  if (ml) {
+    return validSizeMl(Number.parseFloat(ml[1].replace(",", ".")))
+  }
+
+  const liter = raw.match(/^(\d+(?:[.,]\d+)?)\s*l$/i)
+  if (liter) {
+    return validSizeMl(Number.parseFloat(liter[1].replace(",", ".")) * 1000)
+  }
+
+  return null
+}
+
+function validSizeMl(n: number): number | null {
+  if (!Number.isFinite(n) || n <= 0 || n > MAX_REASONABLE_SIZE_ML) return null
+  if (!Number.isInteger(n)) return null
+  return n
+}
+
+function categoryPathFromRelations(
+  categories: BuilderCategoryInput[]
+): string | null {
+  const candidates = categories
+    .map(categoryPathCandidate)
+    .filter((v): v is string => v !== null)
+  const unique = [...new Set(candidates)].sort((a, b) => a.localeCompare(b))
+
+  return unique.length === 1 ? unique[0] : null
+}
+
+function categoryPathCandidate(category: BuilderCategoryInput): string | null {
+  const externalPath = pathFromExternalId(category.external_id)
+  if (externalPath) return externalPath
+
+  return nullableString(category.handle) ?? nullableString(category.name)
+}
+
+function pathFromExternalId(v: string | null): string | null {
+  const externalId = nullableString(v)
+  if (!externalId) return null
+
+  const prefix = "product-catalog:category:"
+  if (externalId.startsWith(prefix)) {
+    return nullableString(externalId.slice(prefix.length))
+  }
+
+  return externalId
 }
 
 function getBoolean(

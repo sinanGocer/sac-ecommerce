@@ -45,13 +45,14 @@ export const FIELD_SOURCE_MAP: Record<string, string> = {
   title: "medusa.product.title",
   brand: "metadata.brand",
   category_ids: "medusa.product.categories[].id",
-  category_path: "metadata.category_path",
-  subcategory: "metadata.subcategory",
+  category_path:
+    "metadata.category_path | medusa.product.categories[] (safe single relation fallback)",
+  subcategory: "metadata.subcategory | metadata.sub_category",
   collection: "metadata.collection | medusa.product.collection.title",
   hair_type: "metadata.hair_type",
   concerns: "metadata.concerns",
   benefits: "metadata.benefits",
-  size_ml: "metadata.size_ml",
+  size_ml: "metadata.size_ml | metadata.volume (safe parser fallback)",
   vegan: "metadata.vegan",
   color_safe: "metadata.color_safe",
   professional_only: "metadata.professional_only (yoksa false)",
@@ -132,6 +133,13 @@ export interface BuilderVariantInput {
   manage_inventory: boolean | null
 }
 
+export interface BuilderCategoryInput {
+  id: string
+  name: string | null
+  handle: string | null
+  external_id: string | null
+}
+
 export interface BuilderProductInput {
   id: string
   handle: string | null
@@ -140,6 +148,7 @@ export interface BuilderProductInput {
   created_at: string | Date | null
   updated_at: string | Date | null
   category_ids: string[]
+  categories?: BuilderCategoryInput[]
   collection_title: string | null
   metadata: Record<string, unknown> | null
   variants: BuilderVariantInput[]
