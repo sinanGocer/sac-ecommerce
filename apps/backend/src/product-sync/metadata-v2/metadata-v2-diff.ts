@@ -8,6 +8,7 @@ import {
   TARGET_METADATA_VERSION,
   V2_PATCH_FIELDS,
 } from "./metadata-v2.types"
+import { metadataFingerprint } from "./metadata-v2-fingerprint"
 
 /**
  * Saf (yan etkisiz) diff/identity/readiness mantığı.
@@ -219,6 +220,18 @@ export function buildProductPlan(input: ProductPlanInput): ProductV2Plan {
   else status = "needs_review"
 
   const versionAfter = ready ? TARGET_METADATA_VERSION : null
+  const approvedPatch: Record<string, unknown> = {}
+  if (ready) {
+    approvedPatch.metadata_version = TARGET_METADATA_VERSION
+    for (const diff of diffs) {
+      if (
+        (diff.status === "added" || diff.status === "normalized") &&
+        !isEmpty(diff.after)
+      ) {
+        approvedPatch[diff.field] = diff.after
+      }
+    }
+  }
 
   const categoryRelationChange =
     diffs.some(
@@ -253,6 +266,8 @@ export function buildProductPlan(input: ProductPlanInput): ProductV2Plan {
     price_untouched: true,
     images_untouched: true,
     variants_untouched: true,
+    metadata_fingerprint_before: metadataFingerprint(existingMetadata),
+    approved_patch: approvedPatch,
     diffs,
   }
 }

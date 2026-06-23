@@ -82,6 +82,9 @@ describe("buildProductPlan", () => {
     expect(p.metadata_version_after_proposed).toBe(2)
     expect(p.fields_added).toContain("category")
     expect(p.fields_added).toContain("hair_type")
+    expect(p.approved_patch.metadata_version).toBe(2)
+    expect(p.approved_patch.category).toBe("sac-bakim")
+    expect(p.approved_patch.color_safe).toBeUndefined()
   })
 
   it("aynı canonical değer → unchanged", () => {

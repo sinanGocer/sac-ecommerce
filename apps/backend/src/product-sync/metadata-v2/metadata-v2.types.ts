@@ -60,6 +60,8 @@ export interface ProductV2Plan {
   price_untouched: true
   images_untouched: true
   variants_untouched: true
+  metadata_fingerprint_before: string
+  approved_patch: Record<string, unknown>
   diffs: FieldDiff[]
 }
 
