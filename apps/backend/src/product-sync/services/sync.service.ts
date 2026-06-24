@@ -253,24 +253,21 @@ export class SyncService {
     let committedCount = 0
     let workflowCalls = 0
     if (commitEnabled) {
-      // Pilot güvenlik: allowlist verildiyse istenen TÜM id'ler eşleşmeli.
-      if (allowlist && missing.length > 0) {
-        throw new Error(
-          `[sync] Fail-closed: istenen external_id'lerden eşleşmeyen var (${missing.join(",")}). Hiçbir ürün yazılmadı.`
-        )
-      }
-      // Stale-plan/precondition: seçili ürünlerin tamamı hâlâ create olmalı.
-      // (Plan sonrası bir ürün existing/review olduysa burada yakalanır.)
-      const selectedActions = results
-        .filter((r) => r.selected === true)
-        .map((r) => r.action)
+      // Bloklayıcı seçili kayıtlar: review/parser/identity (committable değil,
+      // create-only skip DEĞİL). create-only skip güvenli no-op'tur, blok değil.
+      const blockingCount = results.filter(
+        (r) =>
+          r.selected === true &&
+          r.selectionReason === "not_committable_review"
+      ).length
       const duplicateHandles = findDuplicateHandles(
         readyPlan.map((p) => p.draft.handle)
       )
+      // Fail-closed: eksik istenen id / bloklayıcı kayıt / duplicate handle.
       const pre = evaluateBatchPreconditions({
         requestedCount: requestedIds.length,
         matchedCount: matched.size,
-        selectedActions,
+        blockingCount,
         duplicateHandles,
       })
       if (!pre.ok) {
@@ -278,30 +275,36 @@ export class SyncService {
           `[sync] Fail-closed (precondition_failed: ${pre.reason}). Workflow çağrılmadı, hiçbir ürün yazılmadı.`
         )
       }
-      // Defense-in-depth: yazımdan hemen önce her draft hâlâ yok mu? (stale_plan)
-      if (findExisting) {
-        for (const p of readyPlan) {
-          const exists = await findExisting(p.draft.externalId, p.draft.sourceUrl)
-          if (exists) {
-            throw new Error(
-              `[sync] Fail-closed (stale_plan): ${p.draft.externalId} artık mevcut. Workflow çağrılmadı.`
+      // create_ready=0 → güvenli no-op (ör. idempotent tekrar koşu); workflow yok.
+      if (readyPlan.length > 0) {
+        // Defense-in-depth: yazımdan hemen önce her draft hâlâ yok mu? (stale_plan)
+        if (findExisting) {
+          for (const p of readyPlan) {
+            const exists = await findExisting(
+              p.draft.externalId,
+              p.draft.sourceUrl
             )
+            if (exists) {
+              throw new Error(
+                `[sync] Fail-closed (stale_plan): ${p.draft.externalId} artık mevcut. Workflow çağrılmadı.`
+              )
+            }
           }
         }
-      }
-      // TEK workflow çağrısı — tüm draft'lar batch. (5 ayrı çağrı YOK.)
-      const idByExternalId = await commitBatch!(readyPlan.map((p) => p.draft))
-      workflowCalls = 1
-      for (const p of readyPlan) {
-        const id = idByExternalId.get(p.draft.externalId) ?? null
-        if (id) {
-          p.entry.committed = true
-          p.entry.committedId = id
-          committedCount++
-        } else {
-          p.entry.errors.push(
-            `[sync] Batch sonucu eşleşmedi (external_id=${p.draft.externalId}).`
-          )
+        // TEK workflow çağrısı — tüm draft'lar batch. (N ayrı çağrı YOK.)
+        const idByExternalId = await commitBatch!(readyPlan.map((p) => p.draft))
+        workflowCalls = 1
+        for (const p of readyPlan) {
+          const id = idByExternalId.get(p.draft.externalId) ?? null
+          if (id) {
+            p.entry.committed = true
+            p.entry.committedId = id
+            committedCount++
+          } else {
+            p.entry.errors.push(
+              `[sync] Batch sonucu eşleşmedi (external_id=${p.draft.externalId}).`
+            )
+          }
         }
       }
     }
@@ -414,7 +417,11 @@ export class SyncService {
       workflow_calls: ctx.workflowCalls,
     }
     for (const r of results) {
-      if (r.action === "create") summary.create += 1
+      // create-only skip'leri create/update/review'a SAYMA — yalnız kendi
+      // sayacına yazılır (idempotent no-op koşusunda update şişmesin).
+      if (r.selectionReason === "skipped_existing_create_only") {
+        summary.skipped_existing_create_only += 1
+      } else if (r.action === "create") summary.create += 1
       else if (r.action === "update") summary.update += 1
       else if (r.action === "review") summary.review += 1
       else if (r.action === "skip") summary.skip += 1
@@ -425,9 +432,6 @@ export class SyncService {
       }
       if (r.committed) summary.committed += 1
       if (r.selected === true) summary.selected += 1
-      if (r.selectionReason === "skipped_existing_create_only") {
-        summary.skipped_existing_create_only += 1
-      }
     }
     return {
       provider: this.provider.name,

@@ -293,14 +293,18 @@ describe("evaluateSelection — seçim politikası (tek kaynak)", () => {
   })
 })
 
-describe("evaluateBatchPreconditions — batch create fail-closed", () => {
+describe("evaluateBatchPreconditions — batch create fail-closed + idempotent no-op", () => {
   const okBase = {
     requestedCount: 5,
     matchedCount: 5,
-    selectedActions: ["create", "create", "create", "create", "create"],
+    blockingCount: 0,
     duplicateHandles: [] as string[],
   }
-  it("5 geçerli create → ok (tek workflow çağrısına izin)", () => {
+  it("5 eşleşmiş, blok yok → ok (create_ready>0 ise tek workflow)", () => {
+    expect(evaluateBatchPreconditions(okBase)).toEqual({ ok: true, reason: null })
+  })
+  it("hepsi create-only skip (create_ready=0, blok yok) → ok (no-op, hata DEĞİL)", () => {
+    // idempotent ikinci koşu: 5 existing skip, bloklayıcı yok → güvenli no-op
     expect(evaluateBatchPreconditions(okBase)).toEqual({ ok: true, reason: null })
   })
   it("eksik requested ID → fail-closed", () => {
@@ -308,13 +312,10 @@ describe("evaluateBatchPreconditions — batch create fail-closed", () => {
     expect(r.ok).toBe(false)
     expect(r.reason).toBe("missing_requested_ids")
   })
-  it("seçili içinde review/update varsa → fail-closed", () => {
-    const r = evaluateBatchPreconditions({
-      ...okBase,
-      selectedActions: ["create", "review", "create", "create", "create"],
-    })
+  it("seçili içinde review/error (blockingCount>0) → fail-closed", () => {
+    const r = evaluateBatchPreconditions({ ...okBase, blockingCount: 1 })
     expect(r.ok).toBe(false)
-    expect(r.reason).toBe("non_create_selected")
+    expect(r.reason).toBe("blocking_review_or_error")
   })
   it("handle çakışması → fail-closed", () => {
     const r = evaluateBatchPreconditions({
@@ -324,15 +325,15 @@ describe("evaluateBatchPreconditions — batch create fail-closed", () => {
     expect(r.ok).toBe(false)
     expect(r.reason).toBe("duplicate_handle")
   })
-  it("seçili ürün yok → fail-closed", () => {
-    const r = evaluateBatchPreconditions({
-      requestedCount: 0,
-      matchedCount: 0,
-      selectedActions: [],
-      duplicateHandles: [],
-    })
-    expect(r.ok).toBe(false)
-    expect(r.reason).toBe("no_selected_products")
+  it("requested/selected gerçekten 0 → ok (güvenli no-op)", () => {
+    expect(
+      evaluateBatchPreconditions({
+        requestedCount: 0,
+        matchedCount: 0,
+        blockingCount: 0,
+        duplicateHandles: [],
+      })
+    ).toEqual({ ok: true, reason: null })
   })
 })
 

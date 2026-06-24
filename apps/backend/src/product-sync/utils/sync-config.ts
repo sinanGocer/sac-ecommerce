@@ -331,27 +331,32 @@ export function findDuplicateHandles(handles: string[]): string[] {
  * Batch create ön koşulları. Tek workflow çağrısından ÖNCE değerlendirilir;
  * ok=false ise workflow ÇAĞRILMAMALI (fail-closed). Selection policy'yi
  * KOPYALAMAZ; yalnız pilot batch'in bütünlük kurallarını uygular.
+ *
+ * ÖNEMLİ: create_ready=0 olması TEK BAŞINA hata DEĞİLDİR. create-only modunda
+ * tüm seçili ürünler zaten mevcutsa (skipped_existing_create_only) güvenli
+ * no-op'tur. Hata yalnız BLOKLAYICI durumlarda üretilir:
+ *  - requested != matched (eksik istenen id)
+ *  - seçili içinde review/parser/identity/taxonomy hatası (blockingCount)
+ *  - batch içi duplicate handle
  */
 export function evaluateBatchPreconditions(params: {
   requestedCount: number
   matchedCount: number
-  selectedActions: string[]
+  blockingCount: number
   duplicateHandles: string[]
 }): { ok: boolean; reason: string | null } {
-  const { requestedCount, matchedCount, selectedActions, duplicateHandles } =
+  const { requestedCount, matchedCount, blockingCount, duplicateHandles } =
     params
   if (requestedCount !== matchedCount) {
     return { ok: false, reason: "missing_requested_ids" }
   }
-  if (selectedActions.length === 0) {
-    return { ok: false, reason: "no_selected_products" }
-  }
-  if (selectedActions.some((a) => a !== "create")) {
-    return { ok: false, reason: "non_create_selected" }
+  if (blockingCount > 0) {
+    return { ok: false, reason: "blocking_review_or_error" }
   }
   if (duplicateHandles.length > 0) {
     return { ok: false, reason: "duplicate_handle" }
   }
+  // create_ready 0 olabilir (hepsi create-only skip) → güvenli no-op.
   return { ok: true, reason: null }
 }
 
