@@ -4,6 +4,7 @@ import {
   CurrentProductState,
   mergeApprovedMetadata,
   resolveCommitGuard,
+  verifyCommitScope,
 } from "../metadata-v2-commit"
 import { metadataFingerprint } from "../metadata-v2-fingerprint"
 import { ProductV2Plan } from "../metadata-v2.types"
@@ -92,6 +93,49 @@ describe("resolveCommitGuard", () => {
         AVEDA_METADATA_V2_DRY_RUN: "false",
       })
     ).toEqual({ commit_enabled: true, dry_run: false })
+  })
+})
+
+describe("verifyCommitScope — commit scope fail-closed", () => {
+  it("5/5 eşleşmiş, missing yok → ok", () => {
+    expect(
+      verifyCommitScope({
+        requested_external_ids: 5,
+        matched_external_ids: 5,
+        missing_external_ids: [],
+      })
+    ).toEqual({ ok: true, reason: null })
+  })
+  it("scope yok (allowlist'siz plan) → fail-closed", () => {
+    expect(verifyCommitScope(null).ok).toBe(false)
+    expect(verifyCommitScope(undefined).reason).toBe("scope_missing")
+  })
+  it("eksik requested id → fail-closed", () => {
+    expect(
+      verifyCommitScope({
+        requested_external_ids: 5,
+        matched_external_ids: 4,
+        missing_external_ids: ["71184"],
+      }).reason
+    ).toBe("missing_requested_ids")
+  })
+  it("sayı uyuşmazlığı → fail-closed", () => {
+    expect(
+      verifyCommitScope({
+        requested_external_ids: 5,
+        matched_external_ids: 3,
+        missing_external_ids: [],
+      }).reason
+    ).toBe("scope_count_mismatch")
+  })
+  it("boş scope → fail-closed", () => {
+    expect(
+      verifyCommitScope({
+        requested_external_ids: 0,
+        matched_external_ids: 0,
+        missing_external_ids: [],
+      }).reason
+    ).toBe("empty_scope")
   })
 })
 

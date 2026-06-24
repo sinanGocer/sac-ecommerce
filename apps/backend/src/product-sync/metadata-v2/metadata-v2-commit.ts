@@ -72,6 +72,34 @@ export function resolveCommitGuard(
   }
 }
 
+/**
+ * Commit scope fail-closed doğrulaması. Allowlist ile hedefleme yapıldığında
+ * planner raporundaki scope, istenen TÜM external_id'lerin eşleştiğini garanti
+ * etmeli; aksi halde writer çağrılmamalı (DB write 0).
+ */
+export function verifyCommitScope(
+  scope:
+    | {
+        requested_external_ids: number
+        matched_external_ids: number
+        missing_external_ids: string[]
+      }
+    | null
+    | undefined
+): { ok: boolean; reason: string | null } {
+  if (!scope) return { ok: false, reason: "scope_missing" }
+  if (scope.requested_external_ids === 0) {
+    return { ok: false, reason: "empty_scope" }
+  }
+  if (scope.missing_external_ids.length > 0) {
+    return { ok: false, reason: "missing_requested_ids" }
+  }
+  if (scope.matched_external_ids !== scope.requested_external_ids) {
+    return { ok: false, reason: "scope_count_mismatch" }
+  }
+  return { ok: true, reason: null }
+}
+
 export function mergeApprovedMetadata(
   existing: Record<string, unknown>,
   patch: Record<string, unknown>

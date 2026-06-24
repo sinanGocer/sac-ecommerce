@@ -9,8 +9,10 @@ import {
   AvedaMetadataV2CommitWriter,
   CurrentProductState,
   resolveCommitGuard,
+  verifyCommitScope,
 } from "../metadata-v2/metadata-v2-commit"
 import { AvedaMetadataV2Planner } from "../metadata-v2/aveda-metadata-v2-planner.service"
+import { parseExternalIdAllowlist } from "../utils/sync-config"
 
 const REPORTS_DIR = path.resolve(process.cwd(), "metadata-v2-reports")
 
@@ -31,8 +33,31 @@ export default async function avedaMetadataV2Commit({ container }: ExecArgs) {
     )
   }
 
-  const planner = new AvedaMetadataV2Planner(query)
+  // Scope güvenliği: gerçek commit yalnız açık external_id allowlist ile yapılır.
+  // (Dry-run ile birebir hedefleme — eski 5 V2 ve salon-seed kapsam DIŞINDA.)
+  // Geçersiz/boş allowlist → parseExternalIdAllowlist açık hata (fail-closed).
+  const allowlist = parseExternalIdAllowlist(process.env.SYNC_ONLY_EXTERNAL_IDS)
+  if (!allowlist) {
+    throw new Error(
+      "[metadata-v2:commit] Fail-closed: SYNC_ONLY_EXTERNAL_IDS zorunlu (hedef external_id'ler). Yazım yapılmadı."
+    )
+  }
+
+  const planner = new AvedaMetadataV2Planner(query, undefined, allowlist)
   const planReport = await planner.plan()
+
+  // Fail-closed scope doğrulaması: istenen TÜM id'ler eşleşmeli; aksi halde
+  // writer ÇAĞRILMAZ (DB write 0).
+  const scopeCheck = verifyCommitScope(planReport.scope)
+  if (!scopeCheck.ok) {
+    throw new Error(
+      `[metadata-v2:commit] Fail-closed (scope: ${scopeCheck.reason}). Yazım yapılmadı.`
+    )
+  }
+  logger.info(
+    `[metadata-v2:commit] scope OK — requested=${planReport.scope?.requested_external_ids} matched=${planReport.scope?.matched_external_ids} (yalnız hedef ürünler).`
+  )
+
   const productIds = planReport.products.map((product) => product.product_id)
 
   const { data } = await query.graph({
