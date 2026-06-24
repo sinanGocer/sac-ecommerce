@@ -5,6 +5,7 @@ import { ExecArgs } from "@medusajs/framework/types"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 
 import { AvedaMetadataV2Planner } from "../metadata-v2/aveda-metadata-v2-planner.service"
+import { parseExternalIdAllowlist } from "../utils/sync-config"
 
 /**
  * Aveda Metadata V2 Enrichment — DRY-RUN.
@@ -25,11 +26,16 @@ export default async function avedaMetadataV2Dry({ container }: ExecArgs) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
 
+  // Opsiyonel hedefleme: SYNC_ONLY_EXTERNAL_IDS verilirse yalnız o ürünler
+  // işlenir (geçersiz/boş → açık hata, fail-closed). Verilmezse tüm Aveda.
+  const allowlist = parseExternalIdAllowlist(process.env.SYNC_ONLY_EXTERNAL_IDS)
+
   logger.info(
-    "[metadata-v2:dry] DRY-RUN başladı — offline re-normalization, DB write YOK."
+    `[metadata-v2:dry] DRY-RUN başladı — offline re-normalization, DB write YOK. ` +
+      `Hedef external_id: ${allowlist ? [...allowlist].join(",") : "tüm Aveda"}`
   )
 
-  const planner = new AvedaMetadataV2Planner(query)
+  const planner = new AvedaMetadataV2Planner(query, undefined, allowlist)
   const report = await planner.plan()
 
   await fs.mkdir(REPORTS_DIR, { recursive: true })
@@ -48,6 +54,11 @@ export default async function avedaMetadataV2Dry({ container }: ExecArgs) {
 
   const t = report.totals
   logger.info("──────────── METADATA V2 DRY-RUN ÖZET ────────────")
+  if (report.scope) {
+    logger.info(
+      `scope: requested=${report.scope.requested_external_ids} matched=${report.scope.matched_external_ids} missing=${report.scope.missing_external_ids.join(",") || "yok"}`
+    )
+  }
   logger.info(
     `processed=${t.processed} ready_for_v2=${t.ready_for_v2} needs_review=${t.needs_review} rejected=${t.rejected}`
   )

@@ -85,6 +85,14 @@ export interface V2Report {
   source_mode: string
   totals: V2ReportTotals
   products: ProductV2Plan[]
+  /**
+   * Allowlist ile hedefleme yapıldıysa kapsam özeti (yoksa null = tüm Aveda).
+   */
+  scope?: {
+    requested_external_ids: number
+    matched_external_ids: number
+    missing_external_ids: string[]
+  } | null
 }
 
 /**

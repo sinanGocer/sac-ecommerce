@@ -55,11 +55,25 @@ const PATCH_SOURCE_FIELDS = [
 export class AvedaMetadataV2Planner {
   constructor(
     private readonly query: QueryLike,
-    private readonly categories: CategoryMappingService = new CategoryMappingService()
+    private readonly categories: CategoryMappingService = new CategoryMappingService(),
+    /**
+     * Opsiyonel external_id allowlist. Verilirse YALNIZ bu external_id'ler
+     * işlenir (yeni ürünleri hedefleme); null → tüm Aveda ürünleri (eski davranış).
+     */
+    private readonly onlyExternalIds: Set<string> | null = null
   ) {}
 
   async plan(): Promise<V2Report> {
-    const rows = await this.readAvedaProducts()
+    const allAveda = await this.readAvedaProducts()
+    // Allowlist verildiyse yalnız hedef external_id'ler işlenir; eski 5 V2 ve
+    // salon-seed ürünleri kapsam DIŞINDA kalır (plana hiç girmez).
+    const rows = this.onlyExternalIds
+      ? allAveda.filter((r) => {
+          const ext = str(r.metadata?.external_id)
+          return ext !== null && this.onlyExternalIds!.has(ext)
+        })
+      : allAveda
+    const scope = this.buildScope(rows)
 
     // Duplicate identity tespiti (tek geçiş)
     const urlCounts = new Map<string, number>()
@@ -77,7 +91,23 @@ export class AvedaMetadataV2Planner {
       products.push(this.planProduct(row, urlCounts, idCounts))
     }
 
-    return this.buildReport(products)
+    return { ...this.buildReport(products), scope }
+  }
+
+  /** Allowlist hedefleme kapsamı (yoksa null). missing = bulunamayan istenenler. */
+  private buildScope(rows: ProductRow[]): V2Report["scope"] {
+    if (!this.onlyExternalIds) return null
+    const requested = [...this.onlyExternalIds]
+    const matched = new Set<string>()
+    for (const r of rows) {
+      const ext = str(r.metadata?.external_id)
+      if (ext && this.onlyExternalIds.has(ext)) matched.add(ext)
+    }
+    return {
+      requested_external_ids: requested.length,
+      matched_external_ids: matched.size,
+      missing_external_ids: requested.filter((id) => !matched.has(id)),
+    }
   }
 
   private async readAvedaProducts(): Promise<ProductRow[]> {
