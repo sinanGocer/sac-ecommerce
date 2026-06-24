@@ -231,6 +231,87 @@ export function hasBlockingParserError(
   return Array.isArray(parserErrors) && parserErrors.length > 0
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// External-ID allowlist + seçim politikası (pilot import güvenlik filtresi).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * SYNC_ONLY_EXTERNAL_IDS değerini güvenli, deterministik bir Set'e çevirir.
+ *  - undefined → null (allowlist devre dışı, mevcut davranış korunur).
+ *  - virgülle ayrılır, trim'lenir, boşlar atılır, duplicate tekilleştirilir.
+ *  - hiç geçerli değer kalmazsa AÇIK hata (sessizce devam etmez).
+ *  - geçersiz karakter içeren id'de AÇIK hata.
+ */
+export function parseExternalIdAllowlist(
+  value: string | undefined | null
+): Set<string> | null {
+  if (value === undefined || value === null) return null
+  const parts = value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  if (parts.length === 0) {
+    throw new Error(
+      "[sync] SYNC_ONLY_EXTERNAL_IDS verildi ancak geçerli değer içermiyor (boş liste)."
+    )
+  }
+  for (const p of parts) {
+    if (!/^[A-Za-z0-9_-]+$/.test(p)) {
+      throw new Error(
+        `[sync] SYNC_ONLY_EXTERNAL_IDS içinde geçersiz external id: "${p}"`
+      )
+    }
+  }
+  return new Set(parts)
+}
+
+export type SelectionStatus =
+  | "selected_committable"
+  | "filtered_not_selected"
+  | "skipped_existing_create_only"
+  | "not_committable_review"
+
+/**
+ * Tek kaynaklı seçim politikası. Allowlist + create-only kurallarını uygular.
+ * Bir güvenlik filtresidir; mevcut create/update/review kararını BYPASS ETMEZ.
+ * Yalnız allowlist içindeki ve gerçekten committable olan ürün writer'a ulaşır.
+ */
+export function evaluateSelection(params: {
+  externalId: string
+  action: string // taban karar: create | update | review | skip
+  allowlist: Set<string> | null
+  createOnly: boolean
+}): { selected: boolean; committable: boolean; status: SelectionStatus } {
+  const { externalId, action, allowlist, createOnly } = params
+  if (allowlist && !allowlist.has(externalId)) {
+    return {
+      selected: false,
+      committable: false,
+      status: "filtered_not_selected",
+    }
+  }
+  if (action === "review" || action === "skip") {
+    return {
+      selected: true,
+      committable: false,
+      status: "not_committable_review",
+    }
+  }
+  if (createOnly && action === "update") {
+    return {
+      selected: true,
+      committable: false,
+      status: "skipped_existing_create_only",
+    }
+  }
+  // create (her durumda) veya update (create-only kapalıyken) → committable.
+  return {
+    selected: true,
+    committable: action === "create" || action === "update",
+    status: "selected_committable",
+  }
+}
+
 /** Ürün bağlamından gelen (güvenilir) fiyat kaynakları. */
 const VERIFIED_PRICE_SOURCES = new Set<string>([
   "json-ld",

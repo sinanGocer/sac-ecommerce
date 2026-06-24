@@ -14,7 +14,7 @@ import {
 } from "../types/product-sync.types"
 import { PricingPolicyService } from "./pricing-policy.service"
 import { MedusaProductTransformer } from "../transformers/medusa-product.transformer"
-import { hasBlockingParserError } from "../utils/sync-config"
+import { evaluateSelection, hasBlockingParserError } from "../utils/sync-config"
 
 /** Mevcut ürün araması (idempotency). v1'de opsiyonel; sağlanmazsa "create" varsayılır. */
 export type FindExistingFn = (
@@ -119,11 +119,30 @@ export class SyncService {
       )
     }
 
+    // Pilot allowlist + create-only (env parsing script'te; burada hazır gelir).
+    const allowlist =
+      options.onlyExternalIds && options.onlyExternalIds.length > 0
+        ? new Set(options.onlyExternalIds)
+        : null
+    const createOnly = options.createOnly === true
+    const requestedIds = options.onlyExternalIds ?? []
+
     const urls = await this.provider.fetchProductUrls(options.limit)
-    this.logger.info(`[sync] ${urls.length} ürün işlenecek.`)
+    const discovered = urls.length
+    this.logger.info(
+      `[sync] keşfedilen=${discovered} allowlist=${allowlist ? [...allowlist].join(",") : "yok"} createOnly=${createOnly}`
+    )
 
     const results: SyncReportEntry[] = []
+    const matched = new Set<string>()
+    // Commit planı: yalnız seçili + committable ürünler (writer'a yalnız bunlar ulaşır).
+    const committablePlan: Array<{
+      entry: SyncReportEntry
+      draft: MedusaProductDraft
+      action: "create" | "update"
+    }> = []
 
+    // 1) KEŞİF + PARSE + SINIFLANDIRMA — bu aşamada HİÇBİR commit yapılmaz.
     for (const url of urls) {
       try {
         const raw = await this.provider.fetchProduct(url)
@@ -133,38 +152,39 @@ export class SyncService {
           pricing
         )
 
-        // Ayrıştırma/doğrulama hatası (geçersiz/doğrulanmamış başlık, saç-dışı,
-        // doğrulanmamış fiyat vb.) varsa ürün ASLA create/update edilmez —
-        // mevcut (existing) ürün olsa bile bozuk source verisiyle update planı
-        // üretilmez; review'a yönlendirilir.
+        // Ayrıştırma/doğrulama hatası → ürün create/update edilmez, review.
         const blocked = hasBlockingParserError(raw.parserErrors)
-        const action = blocked
+        const baseAction: SyncAction = blocked
           ? "review"
           : await this.decideAction(draft, pricing, findExisting)
 
-        // İndirim tespit edildiyse fiyat-değişiklik kaydı (onay kuyruğu) oluştur
+        // Seçim politikası (allowlist + create-only) — tek kaynak.
+        const sel = evaluateSelection({
+          externalId: draft.externalId,
+          action: baseAction,
+          allowlist,
+          createOnly,
+        })
+        if (allowlist && sel.selected) matched.add(draft.externalId)
+
         if (pricing.discountDetected) {
           await PriceChangeStore.upsert(
             this.buildPriceChange(raw.name, draft, pricing)
           )
         }
 
-        const commitResult = await this.commitIfEnabled(
-          options,
-          draft,
-          action,
-          commitProduct
-        )
+        const action: SyncAction =
+          sel.status === "filtered_not_selected" ? "filtered" : baseAction
 
-        results.push({
+        const entry: SyncReportEntry = {
           sourceUrl: url,
           externalId: draft.externalId,
           name: raw.name,
           action,
           pricing,
           draft,
-          committed: commitResult.committed,
-          committedId: commitResult.committedId,
+          committed: false,
+          committedId: null,
           warnings: raw.warnings,
           errors: [],
           titleSource: raw.titleSource,
@@ -173,9 +193,16 @@ export class SyncService {
           priceVerified: raw.priceVerified,
           parserErrors: raw.parserErrors,
           reviewReasons: blocked ? raw.parserErrors : undefined,
-        })
+          selected: sel.selected,
+          selectionReason: sel.status,
+        }
+        results.push(entry)
+
+        if (sel.committable && (baseAction === "create" || baseAction === "update")) {
+          committablePlan.push({ entry, draft, action: baseAction })
+        }
         this.logger.info(
-          `[sync] ✓ ${raw.name} → ${action}${commitResult.committedId ? ` (${commitResult.committedId})` : ""}`
+          `[sync] • ${raw.name} → ${action} (selected=${sel.selected}, ${sel.status})`
         )
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
@@ -199,18 +226,62 @@ export class SyncService {
           committedId: null,
           warnings: [],
           errors: [message],
+          selected: false,
+          selectionReason: "fetch_error",
         })
       }
     }
 
-    const report = this.buildReport(startedAt, options, results)
+    const missing = requestedIds.filter((id) => !matched.has(id))
+    const commitEnabled = options.commit && !options.dryRun && !!commitProduct
+
+    // 2) COMMIT AŞAMASI — yalnız gerçek commit modunda. Fail-closed + ön doğrulama.
+    let committedCount = 0
+    if (commitEnabled) {
+      // Pilot güvenlik: allowlist verildiyse istenen TÜM id'ler eşleşmeli.
+      if (allowlist && missing.length > 0) {
+        throw new Error(
+          `[sync] Fail-closed: istenen external_id'lerden eşleşmeyen var (${missing.join(",")}). Hiçbir ürün yazılmadı.`
+        )
+      }
+      // All-or-nothing ön doğrulama: yazılacakların tamamı fiyatlı olmalı.
+      for (const p of committablePlan) {
+        if (p.draft.price === null) {
+          throw new Error(
+            `[sync] Fail-closed: ${p.draft.handle} fiyatsız; toplu yazımdan önce iptal. Hiçbir ürün yazılmadı.`
+          )
+        }
+      }
+      // NOT: createProductsWorkflow ürün-başına çağrılır; çapraz-ürün tek
+      // transaction GARANTİSİ YOK. Gerçek atomicity için import görevinde
+      // tüm draft'lar tek workflow input.products dizisinde batch'lenmeli.
+      for (const p of committablePlan) {
+        const id = await commitProduct!(p.draft, p.action)
+        p.entry.committed = true
+        p.entry.committedId = id
+        committedCount++
+      }
+    }
+
+    const report = this.buildReport(startedAt, options, results, {
+      discovered,
+      createOnly,
+      commitEnabled,
+      committedCount,
+      requested: requestedIds,
+      matched,
+      missing,
+    })
     await this.writeReport(report)
 
-    // NOT (v2): Kaynakta artık görünmeyen ürünler otomatik SİLİNMEZ;
-    // commit aşamasında passive/review_required yapılacak.
+    if (!commitEnabled && missing.length > 0) {
+      this.logger.warn(
+        `[sync] Eksik istenen external_id (dry-run, yazım yok): ${missing.join(",")}`
+      )
+    }
 
     this.logger.info(
-      `[sync] Bitti — create=${report.summary.create} update=${report.summary.update} review=${report.summary.review} skip=${report.summary.skip} errors=${report.summary.errors}`
+      `[sync] Bitti — discovered=${discovered} selected=${report.summary.selected} create=${report.summary.create} update=${report.summary.update} review=${report.summary.review} filtered=${report.summary.filtered_not_selected} committed=${report.summary.committed}`
     )
     return report
   }
@@ -231,22 +302,6 @@ export class SyncService {
     }
     const exists = await findExisting(draft.externalId, draft.sourceUrl)
     return exists ? "update" : "create"
-  }
-
-  private async commitIfEnabled(
-    options: SyncRunOptions,
-    draft: MedusaProductDraft,
-    action: SyncAction,
-    commitProduct?: CommitProductFn
-  ): Promise<{ committed: boolean; committedId: string | null }> {
-    if (!options.commit || options.dryRun || !commitProduct) {
-      return { committed: false, committedId: null }
-    }
-    if (action === "review" || action === "skip" || action === "update") {
-      return { committed: false, committedId: null }
-    }
-    const committedId = await commitProduct(draft, action)
-    return { committed: true, committedId }
   }
 
   private buildPriceChange(
@@ -274,7 +329,16 @@ export class SyncService {
   private buildReport(
     startedAt: string,
     options: SyncRunOptions,
-    results: SyncReportEntry[]
+    results: SyncReportEntry[],
+    ctx: {
+      discovered: number
+      createOnly: boolean
+      commitEnabled: boolean
+      committedCount: number
+      requested: string[]
+      matched: Set<string>
+      missing: string[]
+    }
   ): SyncReport {
     const summary = {
       create: 0,
@@ -283,11 +347,35 @@ export class SyncService {
       review: 0,
       errors: 0,
       committed: 0,
+      discovered: ctx.discovered,
+      processed: results.length,
+      selected: 0,
+      filtered_not_selected: 0,
+      skipped_existing_create_only: 0,
+      failed: 0,
+      db_writes: ctx.committedCount,
+      dry_run: options.dryRun,
+      commit_enabled: ctx.commitEnabled,
+      create_only: ctx.createOnly,
+      requested_external_ids: ctx.requested.length,
+      matched_external_ids: ctx.matched.size,
+      missing_requested_external_ids: ctx.missing,
     }
     for (const r of results) {
-      summary[r.action] += 1
-      if (r.errors.length > 0) summary.errors += 1
+      if (r.action === "create") summary.create += 1
+      else if (r.action === "update") summary.update += 1
+      else if (r.action === "review") summary.review += 1
+      else if (r.action === "skip") summary.skip += 1
+      else if (r.action === "filtered") summary.filtered_not_selected += 1
+      if (r.errors.length > 0) {
+        summary.errors += 1
+        summary.failed += 1
+      }
       if (r.committed) summary.committed += 1
+      if (r.selected === true) summary.selected += 1
+      if (r.selectionReason === "skipped_existing_create_only") {
+        summary.skipped_existing_create_only += 1
+      }
     }
     return {
       provider: this.provider.name,

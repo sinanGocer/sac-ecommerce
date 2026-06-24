@@ -120,7 +120,7 @@ export interface PricingDecision {
 }
 
 /** Idempotent senkron eylemi. */
-export type SyncAction = "create" | "update" | "skip" | "review"
+export type SyncAction = "create" | "update" | "skip" | "review" | "filtered"
 
 /** Medusa'ya yazıma hazır taslak (v1'de yalnızca raporlanır, yazılmaz). */
 export interface MedusaProductDraft {
@@ -164,6 +164,9 @@ export interface SyncReportEntry {
   priceVerified?: boolean
   parserErrors?: string[]
   reviewReasons?: string[]
+  /** Allowlist/seçim sonucu (pilot import). */
+  selected?: boolean
+  selectionReason?: string
 }
 
 /** Tüm senkron koşusunun raporu. */
@@ -181,6 +184,20 @@ export interface SyncReport {
     review: number
     errors: number
     committed: number
+    /** Pilot/allowlist alanları (geriye uyumlu). */
+    discovered: number
+    processed: number
+    selected: number
+    filtered_not_selected: number
+    skipped_existing_create_only: number
+    failed: number
+    db_writes: number
+    dry_run: boolean
+    commit_enabled: boolean
+    create_only: boolean
+    requested_external_ids: number
+    matched_external_ids: number
+    missing_requested_external_ids: string[]
   }
   results: SyncReportEntry[]
 }
@@ -217,4 +234,11 @@ export interface SyncRunOptions {
   limit: number | null
   /** v1'de daima false — Medusa yazımı 2. adımda açılacak. */
   commit: boolean
+  /**
+   * Pilot import allowlist'i: yalnız bu external_id'ler işlenir/commit edilir.
+   * null/boş → allowlist devre dışı (mevcut davranış korunur).
+   */
+  onlyExternalIds?: string[] | null
+  /** true → yalnız create commit edilir; update/existing atlanır. */
+  createOnly?: boolean
 }

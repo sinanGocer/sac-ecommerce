@@ -1,9 +1,11 @@
 import {
+  evaluateSelection,
   hasBlockingParserError,
   isAllowedAvedaHost,
   isAllowedHairProductUrl,
   isValidProductTitle,
   isVerifiedPriceSource,
+  parseExternalIdAllowlist,
   resolveSyncLimit,
   titleMatchesSlug,
 } from "../sync-config"
@@ -188,6 +190,103 @@ describe("hasBlockingParserError — review yönlendirme kuralı", () => {
     expect(hasBlockingParserError([])).toBe(false)
     expect(hasBlockingParserError(undefined)).toBe(false)
     expect(hasBlockingParserError(null)).toBe(false)
+  })
+})
+
+describe("parseExternalIdAllowlist", () => {
+  it("env yok → null (mevcut davranış)", () => {
+    expect(parseExternalIdAllowlist(undefined)).toBeNull()
+    expect(parseExternalIdAllowlist(null)).toBeNull()
+  })
+  it("tek id parse edilir", () => {
+    const s = parseExternalIdAllowlist("62089")
+    expect(s && [...s]).toEqual(["62089"])
+  })
+  it("csv parse edilir", () => {
+    const s = parseExternalIdAllowlist("62089,62091,35659")
+    expect(s && [...s]).toEqual(["62089", "62091", "35659"])
+  })
+  it("boşluklar temizlenir", () => {
+    const s = parseExternalIdAllowlist("62089, 62091 ,35659")
+    expect(s && [...s]).toEqual(["62089", "62091", "35659"])
+  })
+  it("duplicate tekilleştirilir", () => {
+    const s = parseExternalIdAllowlist("62089, 62091,35659,62089")
+    expect(s && [...s]).toEqual(["62089", "62091", "35659"])
+  })
+  it("boş liste reddedilir (açık hata)", () => {
+    expect(() => parseExternalIdAllowlist("")).toThrow()
+    expect(() => parseExternalIdAllowlist("  , ,")).toThrow()
+  })
+  it("geçersiz id reddedilir (açık hata)", () => {
+    expect(() => parseExternalIdAllowlist("62089;DROP")).toThrow()
+    expect(() => parseExternalIdAllowlist("62 089")).toThrow()
+  })
+})
+
+describe("evaluateSelection — seçim politikası (tek kaynak)", () => {
+  const AL = new Set(["62089", "62091"])
+  it("allowlist dışı → filtered_not_selected, committable false (writer'a ulaşmaz)", () => {
+    const r = evaluateSelection({
+      externalId: "99999",
+      action: "create",
+      allowlist: AL,
+      createOnly: true,
+    })
+    expect(r.selected).toBe(false)
+    expect(r.committable).toBe(false)
+    expect(r.status).toBe("filtered_not_selected")
+  })
+  it("allowlist içi create → committable", () => {
+    const r = evaluateSelection({
+      externalId: "62089",
+      action: "create",
+      allowlist: AL,
+      createOnly: true,
+    })
+    expect(r.selected).toBe(true)
+    expect(r.committable).toBe(true)
+    expect(r.status).toBe("selected_committable")
+  })
+  it("allowlist içi review → committable değil", () => {
+    const r = evaluateSelection({
+      externalId: "62089",
+      action: "review",
+      allowlist: AL,
+      createOnly: true,
+    })
+    expect(r.committable).toBe(false)
+    expect(r.status).toBe("not_committable_review")
+  })
+  it("allowlist içi update + create-only → skipped_existing_create_only", () => {
+    const r = evaluateSelection({
+      externalId: "62089",
+      action: "update",
+      allowlist: AL,
+      createOnly: true,
+    })
+    expect(r.committable).toBe(false)
+    expect(r.status).toBe("skipped_existing_create_only")
+  })
+  it("create-only kapalı → update committable (eski davranış)", () => {
+    const r = evaluateSelection({
+      externalId: "62089",
+      action: "update",
+      allowlist: AL,
+      createOnly: false,
+    })
+    expect(r.committable).toBe(true)
+    expect(r.status).toBe("selected_committable")
+  })
+  it("allowlist yok → tüm kayıtlar selected (geriye uyumlu)", () => {
+    const r = evaluateSelection({
+      externalId: "x",
+      action: "create",
+      allowlist: null,
+      createOnly: false,
+    })
+    expect(r.selected).toBe(true)
+    expect(r.committable).toBe(true)
   })
 })
 

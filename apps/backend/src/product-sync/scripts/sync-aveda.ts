@@ -14,7 +14,7 @@ import {
 import { AVEDA_PRODUCT_CATALOG_TREE } from "../../product-catalog/architecture"
 import { ProductCatalogCategoryService } from "../../product-catalog/services/product-catalog-category.service"
 import { MedusaProductDraft, SyncLogger } from "../types/product-sync.types"
-import { resolveSyncLimit } from "../utils/sync-config"
+import { parseExternalIdAllowlist, resolveSyncLimit } from "../utils/sync-config"
 
 /**
  * Aveda senkron.
@@ -42,9 +42,13 @@ export default async function syncAveda({ container }: ExecArgs) {
   const dryRun = commit ? process.env.SYNC_DRY_RUN !== "false" : true
   // Dışarıdan SYNC_LIMIT verilmişse onu kullan; yoksa/geçersizse güvenli default (5).
   const limit = resolveSyncLimit(process.env.SYNC_LIMIT)
+  // Pilot allowlist + create-only (env parsing TEK yerde). Geçersiz değer → açık hata.
+  const allowlist = parseExternalIdAllowlist(process.env.SYNC_ONLY_EXTERNAL_IDS)
+  const createOnly = process.env.SYNC_CREATE_ONLY === "true"
 
   logger.info(
-    `[sync:aveda] SYNC_DRY_RUN=${dryRun} SYNC_COMMIT=${commit} SYNC_LIMIT=${limit}`
+    `[sync:aveda] SYNC_DRY_RUN=${dryRun} SYNC_COMMIT=${commit} SYNC_LIMIT=${limit} ` +
+      `SYNC_ONLY_EXTERNAL_IDS=${allowlist ? [...allowlist].join(",") : "yok"} SYNC_CREATE_ONLY=${createOnly}`
   )
   if (commit && dryRun) {
     logger.warn(
@@ -77,14 +81,24 @@ export default async function syncAveda({ container }: ExecArgs) {
   const service = new SyncService(logger, provider)
 
   const report = await service.run(
-    { dryRun, limit, commit },
+    {
+      dryRun,
+      limit,
+      commit,
+      onlyExternalIds: allowlist ? [...allowlist] : null,
+      createOnly,
+    },
     findExisting,
     commitProduct
   )
 
+  const s = report.summary
   logger.info("──────────── ÖZET ────────────")
   logger.info(
-    `Toplam: ${report.total} | create: ${report.summary.create} | update: ${report.summary.update} | review: ${report.summary.review} | skip: ${report.summary.skip} | yazıldı: ${report.summary.committed} | hata: ${report.summary.errors}`
+    `discovered: ${s.discovered} | selected: ${s.selected} | filtered_not_selected: ${s.filtered_not_selected} | create: ${s.create} | update: ${s.update} | review: ${s.review} | skipped_existing_create_only: ${s.skipped_existing_create_only} | committed: ${s.committed} | db_writes: ${s.db_writes}`
+  )
+  logger.info(
+    `requested_ids: ${s.requested_external_ids} | matched: ${s.matched_external_ids} | missing: ${s.missing_requested_external_ids.join(",") || "yok"} | create_only: ${s.create_only} | commit_enabled: ${s.commit_enabled} | dry_run: ${s.dry_run}`
   )
   logger.info(`Rapor: sync-reports/${report.provider}-latest.json`)
 }
