@@ -97,37 +97,39 @@ export class AvedaMetadataV2Planner {
     const m = row.metadata ?? {}
     const sourceUrl = str(m.source_url)
     const externalId = str(m.external_id)
-
-    // Kategori kaynağı: gerçek source_category ya da güvenli legacy fallback (metadata.category)
-    const categorySource = str(m.source_category) ?? str(m.category)
+    const sourceCategory = str(m.source_category)
+    const legacy = isLegacyMetadata(m)
+    const categorySource =
+      sourceCategory ?? (legacy ? str(m.category) : null)
+    const preserveCanonicalV2 =
+      metadataVersion(m) === 2 && sourceCategory === null
 
     const parserErrors: string[] = []
     const missingSourceData: string[] = []
     if (!sourceUrl) missingSourceData.push("source_url")
     if (!externalId) missingSourceData.push("external_id")
-    if (!categorySource) missingSourceData.push("source_category")
+    if (!categorySource && !preserveCanonicalV2) {
+      missingSourceData.push("source_category")
+    }
 
     // Kaynak kanıtı (kısa token'lar; uzun dump yok)
     const evidence: string[] = []
-    if (str(m.source_category)) evidence.push("stored_source_category")
-    else if (str(m.category)) evidence.push("legacy_metadata_category")
+    if (sourceCategory) evidence.push("stored_source_category")
+    else if (legacy && str(m.category)) evidence.push("legacy_metadata_category")
+    else if (preserveCanonicalV2) {
+      evidence.push("preserved_canonical_v2_without_source_category")
+    }
     if (str(m.source_subcategory)) evidence.push("stored_source_subcategory")
-    else if (str(m.sub_category)) evidence.push("stored_sub_category")
-    else if (str(m.subcategory)) evidence.push("stored_subcategory")
+    else if (legacy && str(m.sub_category)) evidence.push("stored_sub_category")
+    else if (legacy && str(m.subcategory)) evidence.push("stored_subcategory")
     const sourceEvidence =
       evidence.length > 0
         ? evidence.join(",")
         : "reconstructed_from_stored_metadata"
 
-    const raw = this.reconstructRawProduct(row)
-    const canonical = this.categories.buildMetadata(raw)
-
-    // Patch alanlarına indirgenmiş canonical öneri (+ sabit sync_provider)
-    const canonicalRecord = canonical as unknown as Record<string, unknown>
-    const proposed: Record<string, unknown> = { sync_provider: "aveda" }
-    for (const field of PATCH_SOURCE_FIELDS) {
-      proposed[field] = canonicalRecord[field]
-    }
+    const proposed = preserveCanonicalV2
+      ? this.preserveCanonicalMetadata(m)
+      : this.buildCanonicalProposal(row, legacy)
     // professional_only buildMetadata tarafından üretilmez → önerilmez (preserved)
 
     return buildProductPlan({
@@ -146,7 +148,31 @@ export class AvedaMetadataV2Planner {
     })
   }
 
-  private reconstructRawProduct(row: ProductRow): RawProduct {
+  private buildCanonicalProposal(
+    row: ProductRow,
+    legacy: boolean
+  ): Record<string, unknown> {
+    const raw = this.reconstructRawProduct(row, legacy)
+    const canonical = this.categories.buildMetadata(raw)
+    const canonicalRecord = canonical as unknown as Record<string, unknown>
+    const proposed: Record<string, unknown> = { sync_provider: "aveda" }
+    for (const field of PATCH_SOURCE_FIELDS) {
+      proposed[field] = canonicalRecord[field]
+    }
+    return proposed
+  }
+
+  private preserveCanonicalMetadata(
+    metadata: Record<string, unknown>
+  ): Record<string, unknown> {
+    const proposed: Record<string, unknown> = { sync_provider: "aveda" }
+    for (const field of PATCH_SOURCE_FIELDS) {
+      proposed[field] = metadata[field]
+    }
+    return proposed
+  }
+
+  private reconstructRawProduct(row: ProductRow, legacy: boolean): RawProduct {
     const m = row.metadata ?? {}
     const currency: CurrencyCode = "try"
     return {
@@ -154,12 +180,11 @@ export class AvedaMetadataV2Planner {
       externalId: str(m.external_id) ?? "",
       name: str(row.title) ?? "",
       brand: str(m.brand) ?? "Aveda",
-      // Güvenli legacy/offline fallback: kaynak yoksa mevcut canonical/legacy alanlar
-      category: str(m.source_category) ?? str(m.category),
+      category:
+        str(m.source_category) ?? (legacy ? str(m.category) : null),
       subCategory:
         str(m.source_subcategory) ??
-        str(m.sub_category) ??
-        str(m.subcategory),
+        (legacy ? str(m.sub_category) ?? str(m.subcategory) : null),
       listPrice: null,
       currentPrice: null,
       salePrice: null,
@@ -216,4 +241,21 @@ export class AvedaMetadataV2Planner {
 
 function str(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null
+}
+
+function metadataVersion(metadata: Record<string, unknown>): number | null {
+  return typeof metadata.metadata_version === "number"
+    ? metadata.metadata_version
+    : null
+}
+
+export function isLegacyMetadata(
+  metadata: Record<string, unknown>
+): boolean {
+  const version = metadataVersion(metadata)
+  return (
+    (version === null || version === 1) &&
+    str(metadata.category_path) === null &&
+    str(metadata.category_external_id) === null
+  )
 }
