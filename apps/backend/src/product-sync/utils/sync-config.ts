@@ -312,6 +312,69 @@ export function evaluateSelection(params: {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Batch create (atomicity) yardımcıları — saf, typed, test edilebilir.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Bir handle listesindeki tekrar eden handle'ları döndürür (batch içi çakışma). */
+export function findDuplicateHandles(handles: string[]): string[] {
+  const seen = new Set<string>()
+  const dupes = new Set<string>()
+  for (const h of handles) {
+    if (seen.has(h)) dupes.add(h)
+    else seen.add(h)
+  }
+  return [...dupes]
+}
+
+/**
+ * Batch create ön koşulları. Tek workflow çağrısından ÖNCE değerlendirilir;
+ * ok=false ise workflow ÇAĞRILMAMALI (fail-closed). Selection policy'yi
+ * KOPYALAMAZ; yalnız pilot batch'in bütünlük kurallarını uygular.
+ */
+export function evaluateBatchPreconditions(params: {
+  requestedCount: number
+  matchedCount: number
+  selectedActions: string[]
+  duplicateHandles: string[]
+}): { ok: boolean; reason: string | null } {
+  const { requestedCount, matchedCount, selectedActions, duplicateHandles } =
+    params
+  if (requestedCount !== matchedCount) {
+    return { ok: false, reason: "missing_requested_ids" }
+  }
+  if (selectedActions.length === 0) {
+    return { ok: false, reason: "no_selected_products" }
+  }
+  if (selectedActions.some((a) => a !== "create")) {
+    return { ok: false, reason: "non_create_selected" }
+  }
+  if (duplicateHandles.length > 0) {
+    return { ok: false, reason: "duplicate_handle" }
+  }
+  return { ok: true, reason: null }
+}
+
+/**
+ * Workflow sonucundaki ürünleri STABİL kimlik (metadata.external_id) ile
+ * eşleştirir — array sırasına güvenmez. external_id'si olmayan/boş ürünler atlanır.
+ */
+export function mapCreatedProductsByExternalId(
+  created: Array<{
+    id?: string | null
+    metadata?: Record<string, unknown> | null
+  }>
+): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const product of created) {
+    const ext = product.metadata?.external_id
+    if (typeof ext === "string" && ext.length > 0 && typeof product.id === "string" && product.id) {
+      out.set(ext, product.id)
+    }
+  }
+  return out
+}
+
 /** Ürün bağlamından gelen (güvenilir) fiyat kaynakları. */
 const VERIFIED_PRICE_SOURCES = new Set<string>([
   "json-ld",

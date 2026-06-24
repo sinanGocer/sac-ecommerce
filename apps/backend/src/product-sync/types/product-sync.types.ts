@@ -198,6 +198,10 @@ export interface SyncReport {
     requested_external_ids: number
     matched_external_ids: number
     missing_requested_external_ids: string[]
+    /** Batch create (atomicity) alanları. */
+    create_ready: number
+    batch_size: number
+    workflow_calls: number
   }
   results: SyncReportEntry[]
 }

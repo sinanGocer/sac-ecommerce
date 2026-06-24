@@ -14,7 +14,12 @@ import {
 } from "../types/product-sync.types"
 import { PricingPolicyService } from "./pricing-policy.service"
 import { MedusaProductTransformer } from "../transformers/medusa-product.transformer"
-import { evaluateSelection, hasBlockingParserError } from "../utils/sync-config"
+import {
+  evaluateBatchPreconditions,
+  evaluateSelection,
+  findDuplicateHandles,
+  hasBlockingParserError,
+} from "../utils/sync-config"
 
 /** Mevcut ürün araması (idempotency). v1'de opsiyonel; sağlanmazsa "create" varsayılır. */
 export type FindExistingFn = (
@@ -22,10 +27,13 @@ export type FindExistingFn = (
   sourceUrl: string
 ) => Promise<boolean>
 
-export type CommitProductFn = (
-  draft: MedusaProductDraft,
-  action: Extract<SyncAction, "create" | "update">
-) => Promise<string>
+/**
+ * Batch create: TÜM doğrulanmış create draft'larını TEK workflow çağrısında
+ * yazar (atomicity). Dönüş: external_id → oluşturulan ürün id eşlemesi.
+ */
+export type CommitBatchFn = (
+  drafts: MedusaProductDraft[]
+) => Promise<Map<string, string>>
 
 export const REPORTS_DIR = path.resolve(process.cwd(), "sync-reports")
 const PRICE_CHANGES_FILE = path.join(REPORTS_DIR, "price-changes.json")
@@ -101,7 +109,7 @@ export class SyncService {
   async run(
     options: SyncRunOptions,
     findExisting?: FindExistingFn,
-    commitProduct?: CommitProductFn
+    commitBatch?: CommitBatchFn
   ): Promise<SyncReport> {
     const startedAt = new Date().toISOString()
     this.logger.info(
@@ -113,9 +121,9 @@ export class SyncService {
         "[sync] commit=true istendi ancak dryRun=true. Yalnızca rapor üretilecek."
       )
     }
-    if (options.commit && !options.dryRun && !commitProduct) {
+    if (options.commit && !options.dryRun && !commitBatch) {
       this.logger.warn(
-        "[sync] commit=true istendi ancak Medusa yazım fonksiyonu verilmedi. Yalnızca rapor üretilecek."
+        "[sync] commit=true istendi ancak Medusa batch yazım fonksiyonu verilmedi. Yalnızca rapor üretilecek."
       )
     }
 
@@ -233,10 +241,17 @@ export class SyncService {
     }
 
     const missing = requestedIds.filter((id) => !matched.has(id))
-    const commitEnabled = options.commit && !options.dryRun && !!commitProduct
+    const commitEnabled = options.commit && !options.dryRun && !!commitBatch
+    // create_ready: yazıma hazır (selected + committable + create + fiyatlı).
+    const readyPlan = committablePlan.filter(
+      (p) => p.action === "create" && p.draft.price !== null
+    )
+    const createReady = readyPlan.length
+    const batchSize = readyPlan.length
 
-    // 2) COMMIT AŞAMASI — yalnız gerçek commit modunda. Fail-closed + ön doğrulama.
+    // 2) BATCH COMMIT — yalnız gerçek commit modunda, TEK workflow çağrısı.
     let committedCount = 0
+    let workflowCalls = 0
     if (commitEnabled) {
       // Pilot güvenlik: allowlist verildiyse istenen TÜM id'ler eşleşmeli.
       if (allowlist && missing.length > 0) {
@@ -244,22 +259,50 @@ export class SyncService {
           `[sync] Fail-closed: istenen external_id'lerden eşleşmeyen var (${missing.join(",")}). Hiçbir ürün yazılmadı.`
         )
       }
-      // All-or-nothing ön doğrulama: yazılacakların tamamı fiyatlı olmalı.
-      for (const p of committablePlan) {
-        if (p.draft.price === null) {
-          throw new Error(
-            `[sync] Fail-closed: ${p.draft.handle} fiyatsız; toplu yazımdan önce iptal. Hiçbir ürün yazılmadı.`
-          )
+      // Stale-plan/precondition: seçili ürünlerin tamamı hâlâ create olmalı.
+      // (Plan sonrası bir ürün existing/review olduysa burada yakalanır.)
+      const selectedActions = results
+        .filter((r) => r.selected === true)
+        .map((r) => r.action)
+      const duplicateHandles = findDuplicateHandles(
+        readyPlan.map((p) => p.draft.handle)
+      )
+      const pre = evaluateBatchPreconditions({
+        requestedCount: requestedIds.length,
+        matchedCount: matched.size,
+        selectedActions,
+        duplicateHandles,
+      })
+      if (!pre.ok) {
+        throw new Error(
+          `[sync] Fail-closed (precondition_failed: ${pre.reason}). Workflow çağrılmadı, hiçbir ürün yazılmadı.`
+        )
+      }
+      // Defense-in-depth: yazımdan hemen önce her draft hâlâ yok mu? (stale_plan)
+      if (findExisting) {
+        for (const p of readyPlan) {
+          const exists = await findExisting(p.draft.externalId, p.draft.sourceUrl)
+          if (exists) {
+            throw new Error(
+              `[sync] Fail-closed (stale_plan): ${p.draft.externalId} artık mevcut. Workflow çağrılmadı.`
+            )
+          }
         }
       }
-      // NOT: createProductsWorkflow ürün-başına çağrılır; çapraz-ürün tek
-      // transaction GARANTİSİ YOK. Gerçek atomicity için import görevinde
-      // tüm draft'lar tek workflow input.products dizisinde batch'lenmeli.
-      for (const p of committablePlan) {
-        const id = await commitProduct!(p.draft, p.action)
-        p.entry.committed = true
-        p.entry.committedId = id
-        committedCount++
+      // TEK workflow çağrısı — tüm draft'lar batch. (5 ayrı çağrı YOK.)
+      const idByExternalId = await commitBatch!(readyPlan.map((p) => p.draft))
+      workflowCalls = 1
+      for (const p of readyPlan) {
+        const id = idByExternalId.get(p.draft.externalId) ?? null
+        if (id) {
+          p.entry.committed = true
+          p.entry.committedId = id
+          committedCount++
+        } else {
+          p.entry.errors.push(
+            `[sync] Batch sonucu eşleşmedi (external_id=${p.draft.externalId}).`
+          )
+        }
       }
     }
 
@@ -271,6 +314,9 @@ export class SyncService {
       requested: requestedIds,
       matched,
       missing,
+      createReady,
+      batchSize,
+      workflowCalls,
     })
     await this.writeReport(report)
 
@@ -338,6 +384,9 @@ export class SyncService {
       requested: string[]
       matched: Set<string>
       missing: string[]
+      createReady: number
+      batchSize: number
+      workflowCalls: number
     }
   ): SyncReport {
     const summary = {
@@ -360,6 +409,9 @@ export class SyncService {
       requested_external_ids: ctx.requested.length,
       matched_external_ids: ctx.matched.size,
       missing_requested_external_ids: ctx.missing,
+      create_ready: ctx.createReady,
+      batch_size: ctx.batchSize,
+      workflow_calls: ctx.workflowCalls,
     }
     for (const r of results) {
       if (r.action === "create") summary.create += 1

@@ -1,10 +1,13 @@
 import {
+  evaluateBatchPreconditions,
   evaluateSelection,
+  findDuplicateHandles,
   hasBlockingParserError,
   isAllowedAvedaHost,
   isAllowedHairProductUrl,
   isValidProductTitle,
   isVerifiedPriceSource,
+  mapCreatedProductsByExternalId,
   parseExternalIdAllowlist,
   resolveSyncLimit,
   titleMatchesSlug,
@@ -287,6 +290,80 @@ describe("evaluateSelection — seçim politikası (tek kaynak)", () => {
     })
     expect(r.selected).toBe(true)
     expect(r.committable).toBe(true)
+  })
+})
+
+describe("evaluateBatchPreconditions — batch create fail-closed", () => {
+  const okBase = {
+    requestedCount: 5,
+    matchedCount: 5,
+    selectedActions: ["create", "create", "create", "create", "create"],
+    duplicateHandles: [] as string[],
+  }
+  it("5 geçerli create → ok (tek workflow çağrısına izin)", () => {
+    expect(evaluateBatchPreconditions(okBase)).toEqual({ ok: true, reason: null })
+  })
+  it("eksik requested ID → fail-closed", () => {
+    const r = evaluateBatchPreconditions({ ...okBase, matchedCount: 4 })
+    expect(r.ok).toBe(false)
+    expect(r.reason).toBe("missing_requested_ids")
+  })
+  it("seçili içinde review/update varsa → fail-closed", () => {
+    const r = evaluateBatchPreconditions({
+      ...okBase,
+      selectedActions: ["create", "review", "create", "create", "create"],
+    })
+    expect(r.ok).toBe(false)
+    expect(r.reason).toBe("non_create_selected")
+  })
+  it("handle çakışması → fail-closed", () => {
+    const r = evaluateBatchPreconditions({
+      ...okBase,
+      duplicateHandles: ["x-handle"],
+    })
+    expect(r.ok).toBe(false)
+    expect(r.reason).toBe("duplicate_handle")
+  })
+  it("seçili ürün yok → fail-closed", () => {
+    const r = evaluateBatchPreconditions({
+      requestedCount: 0,
+      matchedCount: 0,
+      selectedActions: [],
+      duplicateHandles: [],
+    })
+    expect(r.ok).toBe(false)
+    expect(r.reason).toBe("no_selected_products")
+  })
+})
+
+describe("findDuplicateHandles", () => {
+  it("çakışma yok → boş", () => {
+    expect(findDuplicateHandles(["a", "b", "c"])).toEqual([])
+  })
+  it("çakışmaları döndürür", () => {
+    expect(findDuplicateHandles(["a", "b", "a", "c", "b"])).toEqual(["a", "b"])
+  })
+})
+
+describe("mapCreatedProductsByExternalId — sonuç eşleştirme (stabil kimlik)", () => {
+  it("external_id ile eşleştirir (array sırasına güvenmez)", () => {
+    const created = [
+      { id: "prod_2", metadata: { external_id: "62091" } },
+      { id: "prod_1", metadata: { external_id: "62089" } },
+    ]
+    const m = mapCreatedProductsByExternalId(created)
+    expect(m.get("62089")).toBe("prod_1")
+    expect(m.get("62091")).toBe("prod_2")
+    expect(m.size).toBe(2)
+  })
+  it("external_id/id eksik ürünler atlanır", () => {
+    const m = mapCreatedProductsByExternalId([
+      { id: "prod_1", metadata: {} },
+      { id: null, metadata: { external_id: "x" } },
+      { id: "prod_3", metadata: { external_id: "62089" } },
+    ])
+    expect(m.size).toBe(1)
+    expect(m.get("62089")).toBe("prod_3")
   })
 })
 

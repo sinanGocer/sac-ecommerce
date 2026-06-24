@@ -7,14 +7,18 @@ import { createProductsWorkflow } from "@medusajs/medusa/core-flows"
 
 import { AvedaProvider } from "../providers/aveda.provider"
 import {
-  CommitProductFn,
+  CommitBatchFn,
   FindExistingFn,
   SyncService,
 } from "../services/sync.service"
 import { AVEDA_PRODUCT_CATALOG_TREE } from "../../product-catalog/architecture"
 import { ProductCatalogCategoryService } from "../../product-catalog/services/product-catalog-category.service"
 import { MedusaProductDraft, SyncLogger } from "../types/product-sync.types"
-import { parseExternalIdAllowlist, resolveSyncLimit } from "../utils/sync-config"
+import {
+  mapCreatedProductsByExternalId,
+  parseExternalIdAllowlist,
+  resolveSyncLimit,
+} from "../utils/sync-config"
 
 /**
  * Aveda senkron.
@@ -76,7 +80,7 @@ export default async function syncAveda({ container }: ExecArgs) {
   const findExisting: FindExistingFn = async (externalId, sourceUrl) =>
     existing.has(`url:${sourceUrl}`) || existing.has(`id:${externalId}`)
 
-  const commitProduct = await buildCommitProductFn(container, logger)
+  const commitBatch = await buildCommitBatchFn(container, logger)
   const provider = new AvedaProvider(logger)
   const service = new SyncService(logger, provider)
 
@@ -89,7 +93,7 @@ export default async function syncAveda({ container }: ExecArgs) {
       createOnly,
     },
     findExisting,
-    commitProduct
+    commitBatch
   )
 
   const s = report.summary
@@ -100,13 +104,21 @@ export default async function syncAveda({ container }: ExecArgs) {
   logger.info(
     `requested_ids: ${s.requested_external_ids} | matched: ${s.matched_external_ids} | missing: ${s.missing_requested_external_ids.join(",") || "yok"} | create_only: ${s.create_only} | commit_enabled: ${s.commit_enabled} | dry_run: ${s.dry_run}`
   )
+  logger.info(
+    `create_ready: ${s.create_ready} | batch_size: ${s.batch_size} | workflow_calls: ${s.workflow_calls}`
+  )
   logger.info(`Rapor: sync-reports/${report.provider}-latest.json`)
 }
 
-async function buildCommitProductFn(
+/**
+ * Batch create: TÜM doğrulanmış create draft'ları TEK createProductsWorkflow
+ * çağrısında oluşturur (atomicity — N ayrı çağrı YOK). Sonuçlar STABİL kimlik
+ * (metadata.external_id) ile eşleştirilir; array sırasına güvenilmez.
+ */
+async function buildCommitBatchFn(
   container: ExecArgs["container"],
   logger: SyncLogger
-): Promise<CommitProductFn> {
+): Promise<CommitBatchFn> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
 
   const { data: salesChannels } = await query.graph({
@@ -133,22 +145,15 @@ async function buildCommitProductFn(
   const categoryResult = await categoryService.ensureTree(AVEDA_PRODUCT_CATALOG_TREE)
   const categoryIds = categoryResult.idByExternalId
 
-  return async (draft: MedusaProductDraft, action) => {
-    if (action === "update") {
-      logger.warn(
-        `[sync:aveda] Güncelleme commit'i henüz uygulanmıyor, mevcut ürün atlandı: ${draft.handle}`
-      )
-      return ""
-    }
+  const optionTitle = "Seçenek"
 
+  const toWorkflowProduct = (draft: MedusaProductDraft) => {
     if (draft.price === null) {
       throw new Error(`Fiyatı olmayan ürün commit edilemez: ${draft.title}`)
     }
-
     const categoryId = draft.categoryPath
       ? categoryIds.get(draft.categoryPath.externalId) ?? null
       : null
-    const optionTitle = "Seçenek"
     const variants = draft.variants.map((variant, index) => {
       const variantPrice = variant.price ?? draft.price
       if (variantPrice === null) {
@@ -156,7 +161,6 @@ async function buildCommitProductFn(
       }
       const variantTitle = variant.title || "Standart"
       const sku = variant.sku ?? `${draft.handle}-${index + 1}`.toUpperCase()
-
       return {
         title: variantTitle,
         sku,
@@ -170,38 +174,47 @@ async function buildCommitProductFn(
         },
       }
     })
-
-    const { result } = await createProductsWorkflow(container).run({
-      input: {
-        products: [
-          {
-            title: draft.title,
-            handle: draft.handle,
-            description: draft.description ?? undefined,
-            images: draft.images.map((url) => ({ url })),
-            thumbnail: draft.images[0],
-            status: ProductStatus.PUBLISHED,
-            category_ids: categoryId ? [categoryId] : [],
-            shipping_profile_id: shippingProfile.id,
-            options: [
-              {
-                title: optionTitle,
-                values: variants.map((variant) => variant.title),
-              },
-            ],
-            variants,
-            sales_channels: [{ id: defaultSalesChannel.id }],
-            metadata: draft.metadata,
-          },
-        ],
+    return {
+      title: draft.title,
+      handle: draft.handle,
+      description: draft.description ?? undefined,
+      images: draft.images.map((url) => ({ url })),
+      thumbnail: draft.images[0],
+      status: ProductStatus.PUBLISHED,
+      category_ids: categoryId ? [categoryId] : [],
+      shipping_profile_id: shippingProfile.id,
+      options: [
+        { title: optionTitle, values: variants.map((v) => v.title) },
+      ],
+      variants,
+      sales_channels: [{ id: defaultSalesChannel.id }],
+      // Sonuç eşleştirmesi için external_id ürün metadata'sına da yazılır.
+      metadata: {
+        ...draft.metadata,
+        external_id: draft.externalId,
+        source_url: draft.sourceUrl,
       },
+    }
+  }
+
+  return async (drafts: MedusaProductDraft[]): Promise<Map<string, string>> => {
+    if (drafts.length === 0) return new Map()
+
+    // TEK workflow çağrısı — tüm ürünler tek input.products dizisinde.
+    const { result } = await createProductsWorkflow(container).run({
+      input: { products: drafts.map(toWorkflowProduct) },
     })
 
-    const created = result[0]
-    if (!created?.id) {
-      throw new Error(`Medusa ürün id dönmedi: ${draft.title}`)
+    const idByExternalId = mapCreatedProductsByExternalId(result)
+    // Her draft eşleşmeli; eksikse fail (workflow tümünü oluşturmuş olmalı).
+    for (const draft of drafts) {
+      if (!idByExternalId.has(draft.externalId)) {
+        throw new Error(
+          `Batch create sonucu eksik: external_id=${draft.externalId} eşleşmedi.`
+        )
+      }
     }
-
-    return created.id
+    logger.info(`[sync:aveda] Batch create: ${idByExternalId.size} ürün oluşturuldu.`)
+    return idByExternalId
   }
 }
