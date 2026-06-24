@@ -14,6 +14,7 @@ import {
 } from "../types/product-sync.types"
 import { PricingPolicyService } from "./pricing-policy.service"
 import { MedusaProductTransformer } from "../transformers/medusa-product.transformer"
+import { hasBlockingParserError } from "../utils/sync-config"
 
 /** Mevcut ürün araması (idempotency). v1'de opsiyonel; sağlanmazsa "create" varsayılır. */
 export type FindExistingFn = (
@@ -132,11 +133,14 @@ export class SyncService {
           pricing
         )
 
-        const action = await this.decideAction(
-          draft,
-          pricing,
-          findExisting
-        )
+        // Ayrıştırma/doğrulama hatası (geçersiz/doğrulanmamış başlık, saç-dışı,
+        // doğrulanmamış fiyat vb.) varsa ürün ASLA create/update edilmez —
+        // mevcut (existing) ürün olsa bile bozuk source verisiyle update planı
+        // üretilmez; review'a yönlendirilir.
+        const blocked = hasBlockingParserError(raw.parserErrors)
+        const action = blocked
+          ? "review"
+          : await this.decideAction(draft, pricing, findExisting)
 
         // İndirim tespit edildiyse fiyat-değişiklik kaydı (onay kuyruğu) oluştur
         if (pricing.discountDetected) {
@@ -163,6 +167,12 @@ export class SyncService {
           committedId: commitResult.committedId,
           warnings: raw.warnings,
           errors: [],
+          titleSource: raw.titleSource,
+          titleVerified: raw.titleVerified,
+          priceSource: raw.priceSource,
+          priceVerified: raw.priceVerified,
+          parserErrors: raw.parserErrors,
+          reviewReasons: blocked ? raw.parserErrors : undefined,
         })
         this.logger.info(
           `[sync] ✓ ${raw.name} → ${action}${commitResult.committedId ? ` (${commitResult.committedId})` : ""}`

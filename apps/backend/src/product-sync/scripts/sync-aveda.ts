@@ -14,6 +14,7 @@ import {
 import { AVEDA_PRODUCT_CATALOG_TREE } from "../../product-catalog/architecture"
 import { ProductCatalogCategoryService } from "../../product-catalog/services/product-catalog-category.service"
 import { MedusaProductDraft, SyncLogger } from "../types/product-sync.types"
+import { resolveSyncLimit } from "../utils/sync-config"
 
 /**
  * Aveda senkron.
@@ -39,9 +40,8 @@ export default async function syncAveda({ container }: ExecArgs) {
 
   const commit = process.env.SYNC_COMMIT === "true"
   const dryRun = commit ? process.env.SYNC_DRY_RUN !== "false" : true
-  const limitEnv = process.env.SYNC_LIMIT
-  const parsedLimit = limitEnv ? parseInt(limitEnv, 10) : NaN
-  const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 5
+  // Dışarıdan SYNC_LIMIT verilmişse onu kullan; yoksa/geçersizse güvenli default (5).
+  const limit = resolveSyncLimit(process.env.SYNC_LIMIT)
 
   logger.info(
     `[sync:aveda] SYNC_DRY_RUN=${dryRun} SYNC_COMMIT=${commit} SYNC_LIMIT=${limit}`

@@ -13,7 +13,7 @@
     "medusa"
   ],
   "scripts": {
-    "sync:aveda:dry": "SYNC_DRY_RUN=true SYNC_LIMIT=5 medusa exec ./src/product-sync/scripts/sync-aveda.ts",
+    "sync:aveda:dry": "SYNC_DRY_RUN=true medusa exec ./src/product-sync/scripts/sync-aveda.ts",
     "sync:aveda": "medusa exec ./src/product-sync/scripts/sync-aveda.ts",
     "sync:aveda:analyze-categories": "medusa exec ./src/product-sync/scripts/analyze-aveda-categories.ts",
     "sync:all": "medusa exec ./src/product-sync/scripts/sync-all.ts",

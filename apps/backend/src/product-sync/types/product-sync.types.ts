@@ -90,6 +90,19 @@ export interface RawProduct {
   stockStatus: "in_stock" | "out_of_stock" | null
   /** Çıkarım sırasında oluşan uyarılar (eksik alanlar vb.). */
   warnings: string[]
+  /**
+   * Ayrıştırma/doğrulama hataları (geçersiz başlık, saç-dışı ürün vb.).
+   * Dolu ise ürün create edilmez; review'a yönlendirilir.
+   */
+  parserErrors?: string[]
+  /** Ad provenance: hangi kaynaktan çözüldü (json_ld_product/og_title/...). */
+  titleSource?: string
+  /** Başlık güvenilir bir kaynaktan mı doğrulandı? */
+  titleVerified?: boolean
+  /** Fiyat provenance: json-ld/json-key/data-attr/tl-text/null. */
+  priceSource?: string | null
+  /** Fiyat ürün bağlamından mı doğrulandı? */
+  priceVerified?: boolean
 }
 
 /** Fiyatlandırma politikası kararı. */
@@ -144,6 +157,13 @@ export interface SyncReportEntry {
   committedId: string | null
   warnings: string[]
   errors: string[]
+  /** Geriye uyumlu provenance/güvenilirlik alanları (opsiyonel). */
+  titleSource?: string
+  titleVerified?: boolean
+  priceSource?: string | null
+  priceVerified?: boolean
+  parserErrors?: string[]
+  reviewReasons?: string[]
 }
 
 /** Tüm senkron koşusunun raporu. */

@@ -6,6 +6,22 @@ import {
   SyncProvider,
 } from "../types/product-sync.types"
 import { ImageService } from "../services/image.service"
+import {
+  isAllowedAvedaHost,
+  isAllowedHairProductUrl,
+  isValidProductTitle,
+  isVerifiedPriceSource,
+  titleMatchesSlug,
+} from "../utils/sync-config"
+
+/** Ürün adının hangi kaynaktan çözüldüğü (provenance). */
+type TitleSource =
+  | "json_ld_product"
+  | "product_json"
+  | "og_title"
+  | "product_h1"
+  | "document_title"
+  | "none"
 
 export interface AvedaProviderOptions {
   baseUrl: string
@@ -22,8 +38,11 @@ export interface AvedaProviderOptions {
 export const DEFAULT_AVEDA_OPTIONS: AvedaProviderOptions = {
   baseUrl: "https://www.aveda.com.tr",
   sitemapUrl: "https://www.aveda.com.tr/sitemap.xml",
+  // Gerçekçi, güncel tarayıcı UA'sı. Birçok WAF "crawler/bot" ibareli UA'ları
+  // toptan 403 ile engeller; standart tarayıcı sınıfı istemci kullanmak meşrudur.
+  // Proxy/CAPTCHA/cookie aşma YOK — yalnız UA + standart başlıklar.
   userAgent:
-    "SinanKocerHairStore-ProductSync/1.0 (+https://www.aveda.com.tr; respectful crawler)",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
   requestDelayMs: 1200,
   timeoutMs: 20000,
   maxListingPages: 40,
@@ -84,18 +103,37 @@ export class AvedaProvider implements SyncProvider {
   }
 
   async fetchProductUrls(limit: number | null): Promise<string[]> {
-    // 1) Sitemap
+    // 1) Sitemap — başarısızlığı FATAL DEĞİL. 403/404 olursa açıkça raporla ve
+    //    kontrollü biçimde boş liste dön (pipeline çökmesin, DB write 0).
+    //    Not: Listeleme/kategori keşfi de sitemap'ten türetildiği için sitemap
+    //    erişilemezse güvenilir bağımsız fallback yoktur; yeni geniş crawler
+    //    yazmak yerine durum net raporlanır.
     this.logger.info(`[aveda] Sitemap okunuyor: ${this.options.sitemapUrl}`)
-    const xml = await this.httpGet(this.options.sitemapUrl)
+    let xml = ""
+    try {
+      xml = await this.httpGet(this.options.sitemapUrl)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      this.logger.warn(
+        `[aveda] Sitemap alınamadı (keşif yapılamayacak): ${msg}`
+      )
+      this.logger.warn(
+        "[aveda] Sitemap'e bağlı listeleme keşfi için güvenilir fallback yok — 0 ürün döndürülüyor (DB write 0)."
+      )
+      return []
+    }
     const locs = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map(
       (m) => m[1]
     )
     this.logger.info(`[aveda] Sitemap'te toplam ${locs.length} URL bulundu.`)
 
     // 2) Sitemap içinde doğrudan ürün detay URL'i var mı? (genelde yok)
-    const direct = this.canonicalizeMany(this.extractProductLinks(locs.join("\n")))
+    //    Yalnız saç ürünü URL'leri tutulur (deterministik filtre, tek kaynak).
+    const direct = this.canonicalizeMany(
+      this.extractProductLinks(locs.join("\n"))
+    ).filter((u) => isAllowedHairProductUrl(u))
     this.logger.info(
-      `[aveda] Sitemap'te doğrudan ürün detay URL'i: ${direct.length}`
+      `[aveda] Sitemap'te doğrudan saç ürünü detay URL'i: ${direct.length}`
     )
 
     // 3) Listeleme sayfası adayları
@@ -115,7 +153,10 @@ export class AvedaProvider implements SyncProvider {
       try {
         await sleep(this.options.requestDelayMs)
         const html = await this.httpGet(page)
-        const links = this.canonicalizeMany(this.extractProductLinks(html))
+        // Listeleme sayfasındaki alakasız (saç-dışı/legal/gift) linkler elenir.
+        const links = this.canonicalizeMany(
+          this.extractProductLinks(html)
+        ).filter((u) => isAllowedHairProductUrl(u))
         let added = 0
         for (const l of links) {
           if (!found.has(l)) {
@@ -125,7 +166,7 @@ export class AvedaProvider implements SyncProvider {
         }
         pagesCrawled++
         this.logger.info(
-          `[aveda] Listeleme [${pagesCrawled}] ${page} → ${links.length} link (${added} yeni). Toplam: ${found.size}`
+          `[aveda] Listeleme [${pagesCrawled}] ${page} → ${links.length} saç ürünü link (${added} yeni). Toplam: ${found.size}`
         )
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -161,9 +202,24 @@ export class AvedaProvider implements SyncProvider {
     const warnings: string[] = []
 
     const { category, subCategory, urlId, slug } = this.parseUrlParts(url)
+    const parserErrors: string[] = []
 
-    // Ad: og:title genelde doğru; "Homepage"/boş ise h1, sonra slug'tan türet
-    const name = this.resolveName(meta.get("og:title") ?? null, html, slug)
+    // Ad önceliği: JSON-LD Product.name → og:title → H1 → document title.
+    // Legal/cookie/cart/login başlıkları (KVKK vb.) hiçbir zaman kabul edilmez.
+    const jsonLdName = this.nameFromJsonLd(html)
+    const resolved = this.resolveName(
+      jsonLdName,
+      meta.get("og:title") ?? null,
+      html,
+      slug
+    )
+    const name = resolved.name
+    const titleVerified = resolved.valid
+    if (!titleVerified) {
+      parserErrors.push(
+        `title_from_document_only: güvenilir ürün adı yok (kaynak=${resolved.source}); slug'dan create/update üretilmez — review.`
+      )
+    }
 
     const shortDescription = meta.get("og:description") ?? null
 
@@ -193,6 +249,27 @@ export class AvedaProvider implements SyncProvider {
     } else {
       this.logger.info(
         `[aveda] Fiyat bulundu (${priceResult.source}): list=${listPrice} sale=${salePrice ?? "-"}`
+      )
+    }
+
+    // Fiyat provenance güvenliği — sinyaller BİRLİKTE değerlendirilir.
+    // Tekrar eden bir değer (örn. 2119) yalnız tekrarı yüzünden sahte sayılmaz.
+    // priceVerified: fiyat ürün bağlamından mı (json-ld/json-key/data-attr)?
+    // hasProductContext: SKU/product block ya da JSON-LD ürün adı var mı?
+    // Kural: fiyat yok → unverified. Fiyat yalnız global TL fallback'ten geldi
+    // VE (başlık doğrulanmadı VEYA ürün bağlamı yok) → unverified → review.
+    // Doğrulanmış başlık + ürün bağlamı varsa global-fallback fiyat tek başına
+    // review tetiklemez (gerçek 1699/1599/2239 ürünlerinde regresyon olmaz).
+    const priceVerified = isVerifiedPriceSource(priceResult.source)
+    const hasProductContext = sku !== null || jsonLdName !== null
+    if (listPrice === null) {
+      parserErrors.push("price_unverified: fiyat bulunamadı.")
+    } else if (!priceVerified && (!titleVerified || !hasProductContext)) {
+      parserErrors.push(
+        `price_from_global_fallback: fiyat ürün bağlamından değil global kaynaktan geldi (source=${priceResult.source}).`
+      )
+      parserErrors.push(
+        "price_unverified: ürün/SKU bağlamı doğrulanamadı — review."
       )
     }
     if (!shortDescription) warnings.push("Kısa açıklama bulunamadı.")
@@ -233,31 +310,96 @@ export class AvedaProvider implements SyncProvider {
       variants: [variant],
       sku,
       stockStatus: null,
-      warnings,
+      warnings: parserErrors.length > 0 ? [...warnings, ...parserErrors] : warnings,
+      parserErrors: parserErrors.length > 0 ? parserErrors : undefined,
+      titleSource: resolved.source,
+      titleVerified,
+      priceSource: priceResult.source,
+      priceVerified: listPrice !== null && priceVerified,
     }
   }
 
   // ---- ad çıkarımı ----
 
+  /**
+   * Ad önceliği: JSON-LD Product.name → og:title → H1 → document title.
+   * Yalnız `isValidProductTitle` geçen aday kabul edilir; hiçbiri geçmezse
+   * valid=false döner (görüntü için slug fallback verilir ama create edilmez).
+   */
   private resolveName(
+    jsonLdName: string | null,
     ogTitle: string | null,
     html: string,
     slug: string | null
-  ): string {
-    const candidates = [
-      ogTitle ? this.cleanTitle(ogTitle) : null,
-      this.extractH1(html),
-      slug ? this.slugToTitle(slug) : null,
+  ): { name: string; valid: boolean; source: TitleSource } {
+    // Güvenilirlik sırası. document_title düşük güvenli: yalnız slug ile
+    // eşleşirse kabul edilir (jenerik SEO başlıkları zaten validity'de elenir).
+    const candidates: Array<{
+      value: string | null
+      source: TitleSource
+      lowConfidence?: boolean
+    }> = [
+      { value: jsonLdName, source: "json_ld_product" },
+      { value: ogTitle ? this.cleanTitle(ogTitle) : null, source: "og_title" },
+      { value: this.extractH1(html), source: "product_h1" },
+      {
+        value: this.cleanTitle(this.extractTitle(html) ?? ""),
+        source: "document_title",
+        lowConfidence: true,
+      },
     ]
     for (const c of candidates) {
-      if (c && !this.isGenericName(c)) return c
+      if (!c.value || !isValidProductTitle(c.value)) continue
+      if (c.lowConfidence && !titleMatchesSlug(c.value, slug)) continue
+      return { name: c.value, valid: true, source: c.source }
     }
-    return slug ? this.slugToTitle(slug) : "Bilinmeyen Ürün"
+    const fallback = slug ? this.slugToTitle(slug) : "Bilinmeyen Ürün"
+    return { name: fallback, valid: false, source: "none" }
   }
 
-  private isGenericName(name: string): boolean {
-    const n = name.trim().toLowerCase()
-    return n.length === 0 || n === "homepage" || n === "aveda"
+  /** JSON-LD ağacındaki ilk Product.name (tip güvenli). */
+  private nameFromJsonLd(html: string): string | null {
+    const blocks = [
+      ...html.matchAll(
+        /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+      ),
+    ]
+    for (const b of blocks) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(b[1].trim())
+      } catch {
+        continue
+      }
+      const name = this.findProductName(parsed)
+      if (name) return this.decodeEntities(name)
+    }
+    return null
+  }
+
+  private findProductName(node: unknown): string | null {
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const r = this.findProductName(item)
+        if (r) return r
+      }
+      return null
+    }
+    if (node && typeof node === "object") {
+      const obj = node as Record<string, unknown>
+      const type = obj["@type"]
+      const isProduct =
+        type === "Product" ||
+        (Array.isArray(type) && type.includes("Product"))
+      if (isProduct && typeof obj.name === "string" && obj.name.trim()) {
+        return obj.name.trim()
+      }
+      for (const key of Object.keys(obj)) {
+        const r = this.findProductName(obj[key])
+        if (r) return r
+      }
+    }
+    return null
   }
 
   private extractH1(html: string): string | null {
@@ -433,14 +575,26 @@ export class AvedaProvider implements SyncProvider {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.options.timeoutMs)
     try {
+      // Allowed-domain: istek hedefi aveda.com.tr dışındaysa hiç gönderme.
+      if (!isAllowedAvedaHost(url)) {
+        throw new Error(`İzinli olmayan alan adı (allowlist dışı): ${url}`)
+      }
       const res = await fetch(url, {
         headers: {
           "User-Agent": this.options.userAgent,
-          Accept: "text/html,application/xhtml+xml,application/xml",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "Accept-Language": "tr-TR,tr;q=0.9",
         },
         signal: controller.signal,
+        redirect: "follow",
       })
+      // Redirect sonrası domain yeniden doğrulanır (allowlist dışına çıkıldıysa reddet).
+      if (res.url && !isAllowedAvedaHost(res.url)) {
+        throw new Error(
+          `Redirect izinli olmayan alana yönlendi: ${url} → ${res.url}`
+        )
+      }
       if (!res.ok) {
         throw new Error(`HTTP ${res.status} ${res.statusText} — ${url}`)
       }
