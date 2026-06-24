@@ -76,13 +76,10 @@ export default async function searchBackfill({ container }: ExecArgs) {
     Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : null
   const salesChannelId = await resolveSalesChannelId(query)
 
-  let writer: ProjectionWriter | null = null
-  if (commit) {
-    const service = container.resolve<SearchProjectionService>(
-      SEARCH_PROJECTION_MODULE
-    )
-    writer = new ProjectionWriter(service)
-  }
+  const service = container.resolve<SearchProjectionService>(
+    SEARCH_PROJECTION_MODULE
+  )
+  const writer = new ProjectionWriter(service)
   const stockLocationIds = await stockLocationIdsForSalesChannel(
     query,
     salesChannelId
@@ -126,6 +123,8 @@ export default async function searchBackfill({ container }: ExecArgs) {
   }
   let createdTotal = 0
   let updatedTotal = 0
+  let unchangedTotal = 0
+  let dbWritesTotal = 0
   let skip = 0
   const sample: SearchProjection[] = []
 
@@ -183,16 +182,17 @@ export default async function searchBackfill({ container }: ExecArgs) {
       if (sample.length < 3) sample.push(projection)
     }
 
-    // Yalnızca COMMIT modunda yaz
-    if (writer) {
-      const res = await writer.upsertBatch(batchProjections)
-      createdTotal += res.created
-      updatedTotal += res.updated
-    }
+    const res = await writer.upsertBatch(batchProjections, {
+      dryRun: !commit,
+    })
+    createdTotal += res.created
+    updatedTotal += res.updated
+    unchangedTotal += res.unchanged
+    dbWritesTotal += res.db_writes
 
     skip += rows.length
     logger.info(
-      `[search:backfill] İşlenen: ${processed}${commit ? ` (create=${createdTotal} update=${updatedTotal})` : ""} ...`
+      `[search:backfill] İşlenen: ${processed} (create=${createdTotal} update=${updatedTotal} unchanged=${unchangedTotal}) ...`
     )
 
     if (rows.length < take) break
@@ -201,7 +201,7 @@ export default async function searchBackfill({ container }: ExecArgs) {
 
   const report = {
     mode: commit ? ("commit" as const) : ("dry-run" as const),
-    wrote_to_db: commit,
+    wrote_to_db: dbWritesTotal > 0,
     generatedAt: new Date().toISOString(),
     currency,
     batch_size: take,
@@ -215,6 +215,9 @@ export default async function searchBackfill({ container }: ExecArgs) {
       out_of_stock: processed - inStock,
       created: createdTotal,
       updated: updatedTotal,
+      unchanged: unchangedTotal,
+      failed: 0,
+      db_writes: dbWritesTotal,
     },
     metadata_version_distribution: metadataVersionDistribution,
     inventory_availability: inventoryDiagnostics,
@@ -241,7 +244,7 @@ export default async function searchBackfill({ container }: ExecArgs) {
 
   logger.info("──────────── ÖZET ────────────")
   logger.info(
-    `mod=${commit ? "COMMIT" : "DRY-RUN"} | işlenen: ${processed} | fiyatlı: ${withPrice} | stokta: ${inStock} | DB'ye yazıldı: ${commit ? `EVET (create=${createdTotal}, update=${updatedTotal})` : "HAYIR"}`
+    `mod=${commit ? "COMMIT" : "DRY-RUN"} | işlenen: ${processed} | fiyatlı: ${withPrice} | stokta: ${inStock} | create=${createdTotal} update=${updatedTotal} unchanged=${unchangedTotal} | DB'ye yazıldı: ${dbWritesTotal > 0 ? `EVET (${dbWritesTotal})` : "HAYIR"}`
   )
   logger.info(`Rapor: search-reports/search-backfill-latest.json`)
 }

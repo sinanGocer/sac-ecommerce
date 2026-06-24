@@ -1,5 +1,9 @@
 import { SearchProjection } from "../search-projection.types"
-import SearchProjectionService from "../service"
+import {
+  PersistedProjection,
+  PROJECTION_PERSISTED_FIELDS,
+  projectionsEqual,
+} from "./projection-comparator"
 
 /**
  * Projection yazıcı — SearchProjectionService üzerinden idempotent upsert.
@@ -12,6 +16,12 @@ import SearchProjectionService from "../service"
 export interface UpsertResult {
   created: number
   updated: number
+  unchanged: number
+  db_writes: number
+}
+
+export interface UpsertOptions {
+  dryRun?: boolean
 }
 
 // Yazılabilir kısım: satır yaşam döngüsü alanları hariç.
@@ -24,12 +34,28 @@ type WritableProjection = Omit<
   source_updated_at: Date | null
 }
 
-export class ProjectionWriter {
-  constructor(private readonly service: SearchProjectionService) {}
+export interface ProjectionWriterService {
+  listProductSearchProjections(
+    filters: { product_id: string[] },
+    config: { select: string[]; take: number }
+  ): Promise<PersistedProjection[]>
+  createProductSearchProjections(
+    data: WritableProjection[]
+  ): Promise<unknown>
+  updateProductSearchProjections(
+    data: Array<WritableProjection & { id: string }>
+  ): Promise<unknown>
+}
 
-  async upsertBatch(projections: SearchProjection[]): Promise<UpsertResult> {
+export class ProjectionWriter {
+  constructor(private readonly service: ProjectionWriterService) {}
+
+  async upsertBatch(
+    projections: SearchProjection[],
+    options: UpsertOptions = {}
+  ): Promise<UpsertResult> {
     if (projections.length === 0) {
-      return { created: 0, updated: 0 }
+      return { created: 0, updated: 0, unchanged: 0, db_writes: 0 }
     }
 
     const productIds = projections.map((p) => p.product_id)
@@ -37,35 +63,46 @@ export class ProjectionWriter {
     // Mevcut kayıtları TEK sorguda çek (N+1 yok)
     const existing = await this.service.listProductSearchProjections(
       { product_id: productIds },
-      { select: ["id", "product_id"], take: productIds.length }
+      {
+        select: ["id", ...PROJECTION_PERSISTED_FIELDS],
+        take: productIds.length,
+      }
     )
 
-    const idByProductId = new Map<string, string>()
+    const existingByProductId = new Map<string, PersistedProjection>()
     for (const row of existing) {
-      idByProductId.set(row.product_id, row.id)
+      existingByProductId.set(row.product_id, row)
     }
 
     const toCreate: WritableProjection[] = []
     const toUpdate: Array<WritableProjection & { id: string }> = []
+    let unchanged = 0
 
     for (const projection of projections) {
       const data = this.toWritable(projection)
-      const existingId = idByProductId.get(projection.product_id)
-      if (existingId) {
-        toUpdate.push({ id: existingId, ...data })
-      } else {
+      const persisted = existingByProductId.get(projection.product_id)
+      if (!persisted) {
         toCreate.push(data)
+      } else if (projectionsEqual(persisted, projection)) {
+        unchanged++
+      } else {
+        toUpdate.push({ id: persisted.id, ...data })
       }
     }
 
-    if (toCreate.length > 0) {
+    if (!options.dryRun && toCreate.length > 0) {
       await this.service.createProductSearchProjections(toCreate)
     }
-    if (toUpdate.length > 0) {
+    if (!options.dryRun && toUpdate.length > 0) {
       await this.service.updateProductSearchProjections(toUpdate)
     }
 
-    return { created: toCreate.length, updated: toUpdate.length }
+    return {
+      created: toCreate.length,
+      updated: toUpdate.length,
+      unchanged,
+      db_writes: options.dryRun ? 0 : toCreate.length + toUpdate.length,
+    }
   }
 
   private toWritable(projection: SearchProjection): WritableProjection {
