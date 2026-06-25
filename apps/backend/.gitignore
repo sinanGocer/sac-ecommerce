@@ -33,3 +33,9 @@ build
 
 # Metadata V2 Enrichment Planner — dry-run raporları
 /metadata-v2-reports
+
+# Catalog Batch Pipeline — birleşik run raporları
+/catalog-pipeline-reports
+
+# Catalog Batch Pipeline — izole test derleme çıktısı
+/.catalog-test-build
