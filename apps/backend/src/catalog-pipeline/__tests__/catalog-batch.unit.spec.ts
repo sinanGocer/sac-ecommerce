@@ -2,6 +2,7 @@ import {
   buildBaseFingerprintPayload,
   computeBaseFingerprint,
   computePlanFingerprint,
+  LOCK_POLICY_VERSION,
   isConfirmationValid,
   normalizeExternalIds,
 } from "../catalog-batch-fingerprint"
@@ -55,6 +56,27 @@ describe("fingerprint", () => {
   it("base: aynı payload her çalışmada aynı (deterministik)", () => {
     expect(computeBaseFingerprint(buildBaseFingerprintPayload(["a"], 50))).toBe(
       computeBaseFingerprint(buildBaseFingerprintPayload(["a"], 50))
+    )
+  })
+  it("lock policy v1 ve v2 farklı base ve plan fingerprint üretir", () => {
+    const v1Base = computeBaseFingerprint(
+      buildBaseFingerprintPayload(ids, 50, 1)
+    )
+    const v2Base = computeBaseFingerprint(
+      buildBaseFingerprintPayload(ids, 50, 2)
+    )
+    const summary = {
+      requested: 10,
+      matched: 10,
+      missing: 0,
+      create: 10,
+      update: 0,
+      review: 0,
+    }
+    expect(LOCK_POLICY_VERSION).toBe(2)
+    expect(v1Base).not.toBe(v2Base)
+    expect(computePlanFingerprint(v1Base, ids, summary)).not.toBe(
+      computePlanFingerprint(v2Base, ids, summary)
     )
   })
   it("plan: dry-run plan sayacı değişince plan_fingerprint farklı", () => {
@@ -249,6 +271,47 @@ describe("runCatalogPipeline", () => {
     )
     expect(r.final_decision).toBe("PIPELINE_STALE_PLAN")
     expect(calls).toEqual(["DISCOVERY_DRY_RUN"]) // yazım aşamaları çalışmadı
+    expect(r.total_db_writes).toBe(0)
+  })
+  it("eski gerçek confirmation token writer aşamalarını çalıştırmadan reddedilir", async () => {
+    const calls: PipelineStage[] = []
+    const r = await runCatalogPipeline(
+      {
+        externalIds: ["101009", "16395", "16732", "71190", "80715"],
+        discoveryLimit: 50,
+        mode: "commit",
+        confirmToken: "551555f59c4d6712",
+        resume: false,
+      },
+      {
+        runStage: async (stage) => {
+          calls.push(stage)
+          return {
+            counters: {
+              requested_external_ids: 5,
+              matched_external_ids: 5,
+              missing: 0,
+              selected: 5,
+              create: 5,
+              update: 0,
+              review: 0,
+              create_ready: 5,
+              batch_size: 5,
+              workflow_calls: 0,
+              db_writes: 0,
+            },
+            db_writes: 0,
+            report_path: null,
+          }
+        },
+        readTotals: async () => totals,
+        now: () => "T",
+        makeRunId: () => "old-token",
+      }
+    )
+    expect(r.final_decision).toBe("PIPELINE_STALE_PLAN")
+    expect(calls).toEqual(["DISCOVERY_DRY_RUN"])
+    expect(r.plan_fingerprint).not.toBe("551555f59c4d6712")
     expect(r.total_db_writes).toBe(0)
   })
   it("commit doğru confirm → COMPLETED, 9 aşama, db_writes_by_stage", async () => {

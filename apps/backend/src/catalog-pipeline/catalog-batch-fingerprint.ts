@@ -5,11 +5,13 @@ import { parseExternalIdAllowlist } from "../product-sync/utils/sync-config"
 
 /** Politika/şema sürümleri — değişirse fingerprint değişir (eski confirm geçersiz). */
 export const PIPELINE_SCHEMA_VERSION = 1
+export const LOCK_POLICY_VERSION = 2
 export const SYNC_SELECTION_POLICY_VERSION = 1
 export const METADATA_POLICY_VERSION = 1
 
 export interface BaseFingerprintPayload {
   pipeline_schema_version: number
+  lock_policy_version: number
   normalized_external_ids: string[]
   discovery_limit: number
   create_only: true
@@ -17,6 +19,15 @@ export interface BaseFingerprintPayload {
   metadata_policy_version: number
   projection_schema_version: number
 }
+
+export type FingerprintPolicy = Pick<
+  BaseFingerprintPayload,
+  | "pipeline_schema_version"
+  | "lock_policy_version"
+  | "sync_selection_policy_version"
+  | "metadata_policy_version"
+  | "projection_schema_version"
+>
 
 export interface PlanSummary {
   requested: number
@@ -52,10 +63,12 @@ function dedupeSorted(ids: string[]): string[] {
 
 export function buildBaseFingerprintPayload(
   normalizedIds: string[],
-  discoveryLimit: number
+  discoveryLimit: number,
+  lockPolicyVersion = LOCK_POLICY_VERSION
 ): BaseFingerprintPayload {
   return {
     pipeline_schema_version: PIPELINE_SCHEMA_VERSION,
+    lock_policy_version: lockPolicyVersion,
     normalized_external_ids: dedupeSorted(normalizedIds),
     discovery_limit: discoveryLimit,
     create_only: true,
@@ -69,6 +82,7 @@ export function computeBaseFingerprint(payload: BaseFingerprintPayload): string 
   // Anahtarları sıralı serialize et → deterministik.
   const canonical = JSON.stringify({
     pipeline_schema_version: payload.pipeline_schema_version,
+    lock_policy_version: payload.lock_policy_version,
     normalized_external_ids: [...payload.normalized_external_ids].sort(),
     discovery_limit: payload.discovery_limit,
     create_only: payload.create_only,
@@ -77,6 +91,18 @@ export function computeBaseFingerprint(payload: BaseFingerprintPayload): string 
     projection_schema_version: payload.projection_schema_version,
   })
   return sha16(canonical)
+}
+
+export function fingerprintPolicy(
+  payload: BaseFingerprintPayload
+): FingerprintPolicy {
+  return {
+    pipeline_schema_version: payload.pipeline_schema_version,
+    lock_policy_version: payload.lock_policy_version,
+    sync_selection_policy_version: payload.sync_selection_policy_version,
+    metadata_policy_version: payload.metadata_policy_version,
+    projection_schema_version: payload.projection_schema_version,
+  }
 }
 
 /**

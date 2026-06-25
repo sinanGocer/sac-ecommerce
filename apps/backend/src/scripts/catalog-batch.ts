@@ -18,6 +18,7 @@ import { withTemporaryEnv } from "../catalog-pipeline/catalog-batch-env"
 import {
   buildBaseFingerprintPayload,
   computeBaseFingerprint,
+  fingerprintPolicy,
   normalizeExternalIds,
 } from "../catalog-pipeline/catalog-batch-fingerprint"
 import {
@@ -61,9 +62,11 @@ export default async function catalogBatch({ container }: ExecArgs) {
   const requested = externalIds.length
   const discoveryLimit = parsePositiveInt(process.env.CATALOG_DISCOVERY_LIMIT, 50)
   const commit = process.env.CATALOG_PIPELINE_COMMIT === "true"
-  const baseFingerprint = computeBaseFingerprint(
-    buildBaseFingerprintPayload(externalIds, discoveryLimit)
+  const fingerprintPayload = buildBaseFingerprintPayload(
+    externalIds,
+    discoveryLimit
   )
+  const baseFingerprint = computeBaseFingerprint(fingerprintPayload)
   const runId = `cbp_${Date.now().toString(36)}_${baseFingerprint.slice(0, 6)}`
   const allowlistCsv = [...externalIds].sort().join(",")
 
@@ -131,6 +134,7 @@ export default async function catalogBatch({ container }: ExecArgs) {
         runId,
         externalIds,
         baseFingerprint,
+        discoveryLimit,
         lock.decision,
         `${lock.reason}. Lock dosyaları otomatik olarak yalnız sahiplik ve stale doğrulamasıyla değiştirilir.`
       )
@@ -353,6 +357,7 @@ async function writeBlockedReport(
   runId: string,
   externalIds: string[],
   baseFingerprint: string,
+  discoveryLimit: number,
   decision: PipelineReport["final_decision"],
   warning: string
 ): Promise<PipelineReport> {
@@ -363,6 +368,9 @@ async function writeBlockedReport(
     mode: "commit",
     external_ids: externalIds,
     base_fingerprint: baseFingerprint,
+    fingerprint_policy: fingerprintPolicy(
+      buildBaseFingerprintPayload(externalIds, discoveryLimit)
+    ),
     plan_fingerprint: null,
     resume: false,
     started_at: nowIso,

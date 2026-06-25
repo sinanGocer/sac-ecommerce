@@ -8,6 +8,8 @@ import {
   buildBaseFingerprintPayload,
   computeBaseFingerprint,
   computePlanFingerprint,
+  fingerprintPolicy,
+  FingerprintPolicy,
   isConfirmationValid,
 } from "./catalog-batch-fingerprint"
 import { buildCommitCommand, predictExpectedAfter } from "./catalog-batch-report"
@@ -59,9 +61,12 @@ export async function runCatalogPipeline(
 
   const externalIds = [...config.externalIds].sort()
   const requested = externalIds.length
-  const baseFingerprint = computeBaseFingerprint(
-    buildBaseFingerprintPayload(externalIds, config.discoveryLimit)
+  const fingerprintPayload = buildBaseFingerprintPayload(
+    externalIds,
+    config.discoveryLimit
   )
+  const baseFingerprint = computeBaseFingerprint(fingerprintPayload)
+  const policy = fingerprintPolicy(fingerprintPayload)
   const startedAt = now()
   const runId = makeRunId()
   const startingTotals = await deps.readTotals()
@@ -89,6 +94,7 @@ export async function runCatalogPipeline(
       config,
       externalIds,
       baseFingerprint,
+      fingerprintPolicy: policy,
       planFingerprint,
       startedAt,
       finishedAt: now(),
@@ -208,6 +214,7 @@ export async function runCatalogPipeline(
     config,
     externalIds,
     baseFingerprint,
+    fingerprintPolicy: policy,
     planFingerprint,
     startedAt,
     finishedAt: now(),
@@ -307,6 +314,7 @@ interface FinalizeArgs {
   config: PipelineConfig
   externalIds: string[]
   baseFingerprint: string
+  fingerprintPolicy: FingerprintPolicy
   planFingerprint: string | null
   startedAt: string
   finishedAt: string
@@ -337,6 +345,7 @@ function finalizeReport(a: FinalizeArgs): PipelineReport {
     mode: a.config.mode,
     external_ids: a.externalIds,
     base_fingerprint: a.baseFingerprint,
+    fingerprint_policy: a.fingerprintPolicy,
     plan_fingerprint: a.planFingerprint,
     resume: a.config.resume,
     started_at: a.startedAt,

@@ -12,6 +12,7 @@ import {
   buildBaseFingerprintPayload,
   computeBaseFingerprint,
   computePlanFingerprint,
+  LOCK_POLICY_VERSION,
   isConfirmationValid,
   normalizeExternalIds,
 } from "../catalog-batch-fingerprint"
@@ -64,6 +65,9 @@ async function main(): Promise<void> {
   assert.deepStrictEqual(normalizeExternalIds("b, a,a"), ["a", "b"]); passed++
   ok(computeBaseFingerprint(buildBaseFingerprintPayload(["a", "b"], 50)) === computeBaseFingerprint(buildBaseFingerprintPayload(["b", "a", "a"], 50)), "base order/dedupe")
   ok(computeBaseFingerprint(buildBaseFingerprintPayload(["a"], 50)) !== computeBaseFingerprint(buildBaseFingerprintPayload(["a"], 25)), "limit diff")
+  const lockV1 = computeBaseFingerprint(buildBaseFingerprintPayload(ids, 50, 1))
+  const lockV2 = computeBaseFingerprint(buildBaseFingerprintPayload(ids, 50, 2))
+  ok(LOCK_POLICY_VERSION === 2 && lockV1 !== lockV2, "lock policy changes base")
   ok(plan !== computePlanFingerprint(base, ids, { requested: 10, matched: 10, missing: 0, create: 9, update: 0, review: 1 }), "plan counter diff")
   ok(isConfirmationValid(plan, plan) && !isConfirmationValid("x", plan), "confirm plan")
 
@@ -112,7 +116,49 @@ async function main(): Promise<void> {
   // pipeline
   let calls: PipelineStage[] = []
   let r = await runCatalogPipeline({ externalIds: ids, discoveryLimit: 50, mode: "dry-run", confirmToken: null, resume: false }, deps(async (s) => { calls.push(s); return happy(s) }))
-  ok(r.final_decision === "PIPELINE_DRY_RUN_READY" && calls.length === 1 && r.planned_stages.length === 8 && r.plan_fingerprint === plan && (r.commit_command ?? "").includes(plan) && r.total_db_writes === 0, "dry ready")
+  ok(r.final_decision === "PIPELINE_DRY_RUN_READY" && calls.length === 1 && r.planned_stages.length === 8 && r.plan_fingerprint === plan && (r.commit_command ?? "").includes(plan) && r.total_db_writes === 0 && r.fingerprint_policy.lock_policy_version === 2, "dry ready")
+  const oldCalls: PipelineStage[] = []
+  const oldTokenRun = await runCatalogPipeline(
+    {
+      externalIds: ["101009", "16395", "16732", "71190", "80715"],
+      discoveryLimit: 50,
+      mode: "commit",
+      confirmToken: "551555f59c4d6712",
+      resume: false,
+    },
+    {
+      runStage: async (stage) => {
+        oldCalls.push(stage)
+        return {
+          counters: {
+            requested_external_ids: 5,
+            matched_external_ids: 5,
+            missing: 0,
+            selected: 5,
+            create: 5,
+            update: 0,
+            review: 0,
+            create_ready: 5,
+            batch_size: 5,
+            workflow_calls: 0,
+            db_writes: 0,
+          },
+          db_writes: 0,
+          report_path: null,
+        }
+      },
+      readTotals: async () => totals,
+      now: () => "T",
+      makeRunId: () => "old-token",
+    }
+  )
+  ok(
+    oldTokenRun.final_decision === "PIPELINE_STALE_PLAN" &&
+      oldCalls.join(",") === "DISCOVERY_DRY_RUN" &&
+      oldTokenRun.plan_fingerprint !== "551555f59c4d6712" &&
+      oldTokenRun.total_db_writes === 0,
+    "old real token rejected before writers"
+  )
   r = await runCatalogPipeline({ externalIds: ids, discoveryLimit: 50, mode: "commit", confirmToken: "x", resume: false }, deps(async (s) => happy(s)))
   ok(r.final_decision === "PIPELINE_STALE_PLAN" && r.total_db_writes === 0, "stale plan")
   r = await runCatalogPipeline({ externalIds: ids, discoveryLimit: 50, mode: "commit", confirmToken: plan, resume: false }, deps(async (s) => happy(s)))

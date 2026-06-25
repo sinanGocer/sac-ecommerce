@@ -3,6 +3,8 @@
  * kullanır; bu dosya saf tip + sayaç + karar sözleşmesini tanımlar.
  */
 
+import { FingerprintPolicy } from "./catalog-batch-fingerprint"
+
 export type PipelineStage =
   | "DISCOVERY_DRY_RUN"
   | "SYNC_COMMIT"
@@ -103,6 +105,7 @@ export interface PipelineReport {
   external_ids: string[]
   /** yapısal payload'dan üretilen kalıcı kimlik (ID listesi tek başına değil). */
   base_fingerprint: string
+  fingerprint_policy: FingerprintPolicy
   /** dry-run plan sayaçlarını da kapsayan commit confirmation kimliği. */
   plan_fingerprint: string | null
   resume: boolean
