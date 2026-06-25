@@ -8,7 +8,14 @@ import {
 import { runGate, runGateResumeTolerant } from "../catalog-batch-gates"
 import { withTemporaryEnv } from "../catalog-batch-env"
 import { checkReportFreshness, fileChanged } from "../catalog-batch-freshness"
-import { isStaleLock, parseLock, serializeLock } from "../catalog-batch-lock"
+import {
+  isStaleLock,
+  lockIdentity,
+  parseLock,
+  parseRecoveryLock,
+  serializeLock,
+  serializeRecoveryLock,
+} from "../catalog-batch-lock"
 import {
   InvalidReportError,
   readMetadataStageResult,
@@ -186,6 +193,16 @@ describe("lock", () => {
   })
   it("PID belirsiz → stale değil (fail-closed)", () => {
     expect(isStaleLock(data, Date.parse("2026-06-25T20:00:00.000Z"), 3600000, "unknown")).toBe(false)
+  })
+  it("lock identity tüm sahiplik alanlarını içerir", () => {
+    expect(lockIdentity(data)).toBe("r1:999:2026-06-25T18:00:00.000Z:abc")
+  })
+  it("recovery mutex typed parse edilir", () => {
+    const recovery = { ...data, target_lock_identity: lockIdentity(data) }
+    expect(parseRecoveryLock(serializeRecoveryLock(recovery))).toEqual({
+      kind: "valid",
+      data: recovery,
+    })
   })
 })
 

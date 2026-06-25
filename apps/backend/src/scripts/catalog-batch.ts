@@ -26,11 +26,9 @@ import {
   fileChanged,
 } from "../catalog-pipeline/catalog-batch-freshness"
 import {
-  LockData,
-  isStaleLock,
-  parseLock,
-  PidStatus,
-  serializeLock,
+  PipelineLock,
+  acquirePipelineLock,
+  releasePipelineLock,
 } from "../catalog-pipeline/catalog-batch-lock"
 import {
   PipelineDeps,
@@ -47,7 +45,9 @@ import {
 const REPORTS_DIR = path.resolve(process.cwd(), "catalog-pipeline-reports")
 const LATEST_REPORT = path.join(REPORTS_DIR, "catalog-batch-latest.json")
 const LOCK_PATH = path.join(REPORTS_DIR, "catalog-batch.lock")
+const RECOVERY_LOCK_PATH = `${LOCK_PATH}.recovery`
 const LOCK_STALE_MS = 60 * 60 * 1000
+const RECOVERY_LOCK_STALE_MS = 5 * 60 * 1000
 const SYNC_REPORT = "sync-reports/aveda-latest.json"
 const V2_DRY_REPORT = "metadata-v2-reports/aveda-metadata-v2-latest.json"
 const V2_COMMIT_REPORT = "metadata-v2-reports/aveda-metadata-v2-commit-latest.json"
@@ -111,26 +111,36 @@ export default async function catalogBatch({ container }: ExecArgs) {
 
   let report: PipelineReport
   if (config.mode === "commit") {
-    const lock = await acquireCommitLock({
+    const lockOwner: PipelineLock = {
       run_id: runId,
       pid: process.pid,
       started_at: new Date().toISOString(),
       fingerprint: baseFingerprint,
-    })
-    if (lock.kind === "invalid") {
-      report = await writeBlockedReport(runId, externalIds, baseFingerprint, "PIPELINE_INVALID_LOCK", "Lock dosyası bozuk; otomatik silinmedi. Elle inceleyin.")
-      logSummary(logger, report)
-      return
     }
-    if (lock.kind === "busy") {
-      report = await writeBlockedReport(runId, externalIds, baseFingerprint, "PIPELINE_ALREADY_RUNNING", "Başka bir commit pipeline çalışıyor (canlı lock). Yazım yapılmadı.")
+    const lock = await acquirePipelineLock({
+      paths: {
+        lockPath: LOCK_PATH,
+        recoveryPath: RECOVERY_LOCK_PATH,
+      },
+      lock: lockOwner,
+      lockStaleMs: LOCK_STALE_MS,
+      recoveryStaleMs: RECOVERY_LOCK_STALE_MS,
+    })
+    if (!lock.ok) {
+      report = await writeBlockedReport(
+        runId,
+        externalIds,
+        baseFingerprint,
+        lock.decision,
+        `${lock.reason}. Lock dosyaları otomatik olarak yalnız sahiplik ve stale doğrulamasıyla değiştirilir.`
+      )
       logSummary(logger, report)
       return
     }
     try {
       report = await runCatalogPipeline(config, deps)
     } finally {
-      await lock.release()
+      await releasePipelineLock(LOCK_PATH, lockOwner)
     }
   } else {
     report = await runCatalogPipeline(config, deps)
@@ -315,57 +325,6 @@ async function readCatalogTotals(query: {
     aveda_metadata_v2: v2,
     salon_seed_v1: product - aveda,
     projection_rows: projectionRows,
-  }
-}
-
-// ── lock (atomik dosya, fail-closed) ─────────────────────────────────────────
-
-type LockResult =
-  | { kind: "acquired"; release: () => Promise<void> }
-  | { kind: "busy" }
-  | { kind: "invalid" }
-
-async function acquireCommitLock(data: LockData): Promise<LockResult> {
-  await fs.mkdir(REPORTS_DIR, { recursive: true })
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fh = await fs.open(LOCK_PATH, "wx")
-      await fh.writeFile(serializeLock(data))
-      await fh.close()
-      return { kind: "acquired", release: () => releaseOwnLock(data.run_id) }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err
-      const raw = await fs.readFile(LOCK_PATH, "utf-8").catch(() => "")
-      const parsed = parseLock(raw)
-      if (parsed.kind === "invalid") return { kind: "invalid" } // bozuk → silme, dur
-      if (isStaleLock(parsed.data, Date.now(), LOCK_STALE_MS, pidStatus(parsed.data.pid))) {
-        await fs.unlink(LOCK_PATH).catch(() => {})
-        continue // stale → geri al ve tekrar dene
-      }
-      return { kind: "busy" } // canlı/belirsiz sahibi → koru
-    }
-  }
-  return { kind: "busy" }
-}
-
-/** finally'de YALNIZ kendi lock'unu sil (run_id eşleşmesi). */
-async function releaseOwnLock(runId: string): Promise<void> {
-  const raw = await fs.readFile(LOCK_PATH, "utf-8").catch(() => "")
-  const parsed = parseLock(raw)
-  if (parsed.kind === "valid" && parsed.data.run_id === runId) {
-    await fs.unlink(LOCK_PATH).catch(() => {})
-  }
-}
-
-function pidStatus(pid: number): PidStatus {
-  try {
-    process.kill(pid, 0)
-    return "alive"
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code
-    if (code === "ESRCH") return "dead"
-    if (code === "EPERM") return "alive" // var ama izin yok → canlı
-    return "unknown"
   }
 }
 

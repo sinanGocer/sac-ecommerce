@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import assert from "assert"
 
+import { runLockFilesystemTests } from "./catalog-lock-filesystem"
 import {
   readMetadataStageResult,
   readProjectionStageResult,
@@ -93,6 +94,11 @@ async function main(): Promise<void> {
   ok(!isStaleLock(ld, Date.parse("2026-06-25T20:00:00.000Z"), 3600000, "unknown"), "unknown not stale")
   ok(isStaleLock(ld, Date.parse("2026-06-25T20:00:00.000Z"), 3600000, "dead"), "dead+ttl stale")
   ok(!isStaleLock(ld, Date.parse("2026-06-25T18:00:30.000Z"), 3600000, "dead"), "dead+fresh not stale")
+  const fsLock = await runLockFilesystemTests()
+  passed += fsLock.assertions
+  console.log(
+    `CATALOG LOCK CONCURRENCY: ${fsLock.concurrency_rounds} ROUNDS PASSED`
+  )
 
   // adapters
   threw = false
