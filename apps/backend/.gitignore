@@ -60,3 +60,9 @@ build
 
 # TR Shipping Setup — izole test derleme çıktısı
 /.shipping-setup-test-build
+
+# Checkout Test Order — dry-run/commit raporları
+/checkout-test-reports
+
+# Checkout Test Order — izole test derleme çıktısı
+/.checkout-test-build
