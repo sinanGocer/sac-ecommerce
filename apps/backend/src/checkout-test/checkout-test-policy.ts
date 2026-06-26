@@ -7,13 +7,18 @@
  * YALNIZ plan; hiçbir cart/order/payment mutation yapılmaz.
  */
 
-export const CHECKOUT_TEST_ORDER_POLICY_VERSION = 2
+export const CHECKOUT_TEST_ORDER_POLICY_VERSION = 3
 
 /** Commit execution path sürümleri (fingerprint'e dahil). */
 export const EXECUTION_STRATEGY_VERSION = 1
-export const PRE_COMPLETE_GATE_VERSION = 1
+export const PRE_COMPLETE_GATE_VERSION = 2
 export const RECOVERY_STRATEGY_VERSION = 1
 export const CANCELLATION_STRATEGY_VERSION = 1
+
+/** v3: pre-complete money normalizasyon güvenlik sürümleri (fingerprint'e dahil). */
+export const MONEY_NORMALIZATION_VERSION = 1
+export const SHIPPING_AMOUNT_RESOLUTION_STRATEGY = "cart_shipping_total_then_method_with_consistency_gate"
+export const CART_TOTAL_CONSISTENCY_GATE_VERSION = 1
 
 /** Gerçek commit'te yürütülecek mutation sırası (sabit, fingerprint'e dahil). */
 export const MUTATION_SEQUENCE = [

@@ -38,6 +38,10 @@ export interface CheckoutTestFingerprintPayload {
   recovery_strategy_version: number
   selected_inventory_location_candidates: string[]
   cancellation_strategy_version: number
+  // v3 money normalization güvenlik alanları
+  money_normalization_version: number
+  shipping_amount_resolution_strategy: string
+  cart_total_consistency_gate_version: number
 }
 
 function sha16(value: string): string {
@@ -86,6 +90,9 @@ export function computeCheckoutTestFingerprint(
     recovery_strategy_version: payload.recovery_strategy_version,
     selected_inventory_location_candidates: [...payload.selected_inventory_location_candidates].sort(),
     cancellation_strategy_version: payload.cancellation_strategy_version,
+    money_normalization_version: payload.money_normalization_version,
+    shipping_amount_resolution_strategy: payload.shipping_amount_resolution_strategy,
+    cart_total_consistency_gate_version: payload.cart_total_consistency_gate_version,
   })
   return sha16(canonical)
 }

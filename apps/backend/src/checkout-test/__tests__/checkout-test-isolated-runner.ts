@@ -11,6 +11,11 @@ import {
   executeCheckoutTestOrder,
 } from "../checkout-test-executor"
 import {
+  checkCartTotalsConsistency,
+  normalizeMoney,
+  resolveShippingAmount,
+} from "../money"
+import {
   computeExpectedTotals,
   evaluateCostGate,
   evaluatePreComplete,
@@ -226,13 +231,72 @@ async function main(): Promise<void> {
   // ek) totals helper deterministik (tax_rate 0)
   ok(computeExpectedTotals(validSnapshot()).grand_total === 228, "ek totals 228")
 
-  // policy v2 doğrulaması
-  ok(CHECKOUT_TEST_ORDER_POLICY_VERSION === 2, "policy version is 2")
+  // policy v3 doğrulaması
+  ok(CHECKOUT_TEST_ORDER_POLICY_VERSION === 3, "policy version is 3")
+  // eski v2 fingerprint artık üretilmez (yeni payload alanları)
+  ok(happy.plan_fingerprint !== "6c53ef4e763cd4b7", "old v2 fingerprint invalidated")
+
+  // ── Money normalization (BigNumber/string/null) ───────────────────────────
+  runMoneyTests()
 
   // ── Commit execution (fake adapter; canlı mutation YOK) ───────────────────
   await runExecutorAsync()
 
   console.log(`CHECKOUT TEST ORDER ISOLATED TESTS: ${passed} PASSED`)
+}
+
+// ── Money normalization tests ─────────────────────────────────────────────────
+
+/** BigNumber benzeri sahte nesneler. */
+const bnValueOf = (n: number) => ({ valueOf: () => n })
+const bnToNumber = (n: number) => ({ toNumber: () => n })
+const bnToString = (n: number) => ({ toString: () => String(n) })
+const bnNumeric = (n: number) => ({ numeric_: n })
+
+function runMoneyTests(): void {
+  // 1-8 normalizeMoney
+  ok(normalizeMoney(169) === 169, "m1 number")
+  ok(normalizeMoney("169") === 169, "m2 numeric string")
+  ok(normalizeMoney(bnValueOf(169)) === 169, "m3 BigNumber valueOf")
+  ok(normalizeMoney(bnToNumber(169)) === 169, "m4 BigNumber toNumber")
+  ok(normalizeMoney(bnToString(169)) === 169, "m5 BigNumber toString")
+  ok(normalizeMoney(bnNumeric(169)) === 169, "m5b BigNumber numeric_")
+  ok(normalizeMoney(null) === null && normalizeMoney(undefined) === null, "m6 null/undefined")
+  ok(normalizeMoney("abc") === null && normalizeMoney({}) === null, "m7 invalid → null")
+  ok(normalizeMoney(NaN) === null && normalizeMoney(Infinity) === null, "m8 NaN/Infinity → null")
+
+  // 9-10 unit price drift via pre-complete (normalize edilmiş değerle)
+  ok(evaluatePreComplete({ ...validCartState(), line: { variant_id: EXPECTED_PRODUCT.variant_id, quantity: 1, unit_price: normalizeMoney(bnValueOf(169)) } }, preExpected()).ok, "m9 BigNumber unit_price no drift")
+  ok(evaluatePreComplete({ ...validCartState(), line: { variant_id: EXPECTED_PRODUCT.variant_id, quantity: 1, unit_price: normalizeMoney(bnValueOf(170)) } }, preExpected()).blockers.includes("unit_price_drift"), "m10 real unit price drift detected")
+
+  // 11) method amount null ama cart shipping_total 59 → 59 çözülür
+  {
+    const r = resolveShippingAmount(bnValueOf(59), null, null)
+    ok(r.ok && r.amount === 59, "m11 shipping resolved from cart total")
+  }
+  // 12) cart shipping_total 59 vs method amount 79 → conflict block
+  {
+    const r = resolveShippingAmount(bnValueOf(59), null, bnValueOf(79))
+    ok(!r.ok && r.reason === "shipping_source_conflict", "m12 shipping source conflict blocks")
+  }
+  // 12b) ikisi de null → unresolved
+  ok(!resolveShippingAmount(null, null, null).ok, "m12b shipping unresolved")
+  // 12c) tutarlı kaynaklar → ok
+  ok(resolveShippingAmount(bnValueOf(59), bnValueOf(59), bnValueOf(59)).amount === 59, "m12c consistent shipping ok")
+
+  // 13-14) cart total arithmetic consistency
+  {
+    const good = checkCartTotalsConsistency({ item_total: bnValueOf(169), shipping_total: bnValueOf(59), tax_total: bnValueOf(0), discount_total: bnValueOf(0), total: bnValueOf(228) })
+    ok(good.ok && good.normalized.total === 228, "m13 totals consistent")
+    const bad = checkCartTotalsConsistency({ item_total: bnValueOf(169), shipping_total: bnValueOf(59), tax_total: bnValueOf(0), discount_total: bnValueOf(0), total: bnValueOf(999) })
+    ok(!bad.ok && bad.reason === "total_arithmetic_mismatch", "m14 total arithmetic mismatch blocked")
+  }
+  // 15) discount drift breaks arithmetic
+  ok(!checkCartTotalsConsistency({ item_total: 169, shipping_total: 59, tax_total: 0, discount_total: 10, total: 228 }).ok, "m15 discount drift blocked")
+  // 16) tax drift breaks arithmetic
+  ok(!checkCartTotalsConsistency({ item_total: 169, shipping_total: 59, tax_total: 18, discount_total: 0, total: 228 }).ok, "m16 tax drift blocked")
+  // 17) unparseable money → block
+  ok(!checkCartTotalsConsistency({ item_total: "x", shipping_total: 59, tax_total: 0, discount_total: 0, total: 228 }).ok, "m17 unparseable money blocked")
 }
 
 // ── Fake execution deps ───────────────────────────────────────────────────────

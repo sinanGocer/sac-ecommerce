@@ -13,16 +13,19 @@ import {
 import { evaluateCheckoutTestStages } from "./checkout-test-plan"
 import {
   CANCELLATION_STRATEGY_VERSION,
+  CART_TOTAL_CONSISTENCY_GATE_VERSION,
   CHECKOUT_TEST_ORDER_POLICY_VERSION,
   CheckoutTestDecision,
   CheckoutTestSnapshot,
   COUNTRY_CODE,
   EXECUTION_STRATEGY_VERSION,
   ExpectedTotals,
+  MONEY_NORMALIZATION_VERSION,
   MUTATION_SEQUENCE,
   PRE_COMPLETE_GATE_VERSION,
   QUANTITY,
   RECOVERY_STRATEGY_VERSION,
+  SHIPPING_AMOUNT_RESOLUTION_STRATEGY,
   StageResult,
   TEST_ADDRESS,
   TEST_EMAIL,
@@ -133,6 +136,9 @@ export function planCheckoutTest(
         .map((c) => c.location_id)
         .sort(),
       cancellation_strategy_version: CANCELLATION_STRATEGY_VERSION,
+      money_normalization_version: MONEY_NORMALIZATION_VERSION,
+      shipping_amount_resolution_strategy: SHIPPING_AMOUNT_RESOLUTION_STRATEGY,
+      cart_total_consistency_gate_version: CART_TOTAL_CONSISTENCY_GATE_VERSION,
     }
     planFingerprint = computeCheckoutTestFingerprint(fingerprintPayload)
   }

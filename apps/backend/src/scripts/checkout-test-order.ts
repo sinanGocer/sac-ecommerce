@@ -19,6 +19,11 @@ import {
   executeCheckoutTestOrder,
 } from "../checkout-test/checkout-test-executor"
 import { PreCompleteExpected } from "../checkout-test/checkout-test-plan"
+import {
+  checkCartTotalsConsistency,
+  normalizeMoney,
+  resolveShippingAmount,
+} from "../checkout-test/money"
 import { isCheckoutTestConfirmationValid } from "../checkout-test/checkout-test-fingerprint"
 import {
   CheckoutTestDecision,
@@ -410,11 +415,11 @@ function buildExecutionDeps(
         entity: "cart",
         fields: [
           "id", "email", "completed_at", "currency_code",
-          "items.id", "items.variant_id", "items.product_id", "items.quantity", "items.unit_price",
-          "shipping_methods.id", "shipping_methods.shipping_option_id", "shipping_methods.amount",
+          "items.id", "items.variant_id", "items.product_id", "items.quantity", "items.unit_price", "items.subtotal",
+          "shipping_methods.id", "shipping_methods.shipping_option_id", "shipping_methods.amount", "shipping_methods.total",
           "shipping_address.country_code",
           "payment_collection.payment_sessions.provider_id",
-          "total",
+          "item_total", "shipping_total", "tax_total", "discount_total", "total",
         ],
         filters: { id: cartId },
       })
@@ -422,18 +427,37 @@ function buildExecutionDeps(
       const item = (c?.items ?? [])[0] ?? null
       const sm = (c?.shipping_methods ?? [])[0] ?? null
       const ps = (c?.payment_collection?.payment_sessions ?? [])[0] ?? null
+
+      // Money normalizasyonu: BigNumber/string/null → number|null (sessiz 0 yok).
+      const shipping = resolveShippingAmount(c?.shipping_total, sm?.total, sm?.amount)
+      const consistency = checkCartTotalsConsistency({
+        item_total: c?.item_total,
+        shipping_total: c?.shipping_total,
+        tax_total: c?.tax_total,
+        discount_total: c?.discount_total,
+        total: c?.total,
+      })
+
       return {
         created_by_this_run: true,
         email: c?.email ?? null,
         item_count: (c?.items ?? []).length,
-        line: item ? { variant_id: item.variant_id, quantity: item.quantity, unit_price: item.unit_price } : null,
+        line: item
+          ? {
+              variant_id: item.variant_id,
+              quantity: normalizeMoney(item.quantity),
+              unit_price: normalizeMoney(item.unit_price),
+            }
+          : null,
         shipping_option_id: sm?.shipping_option_id ?? null,
-        shipping_amount: typeof sm?.amount === "number" ? sm.amount : null,
+        // Çözüm başarısız (kaynak çelişkisi/çözülemez) → null → gate bloklar.
+        shipping_amount: shipping.ok ? shipping.amount : null,
         country_code: c?.shipping_address?.country_code ?? null,
         payment_provider_id: ps?.provider_id ?? null,
         completed_at: c?.completed_at ?? null,
         order_reference_count: c?.completed_at ? 1 : 0,
-        total: typeof c?.total === "number" ? c.total : Number(c?.total ?? 0),
+        // Tutarlılık başarısız → mismatch zorla (fail-closed); aksi halde normalize total.
+        total: consistency.ok ? consistency.normalized.total! : -1,
       }
     },
     completeCart: async (cartId: string) => {
