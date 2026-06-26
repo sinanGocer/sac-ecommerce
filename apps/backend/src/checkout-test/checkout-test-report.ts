@@ -2,6 +2,7 @@
  * Checkout Test Order — rapor yapısı + commit komutu (SAF).
  */
 
+import { ExecutionResult } from "./checkout-test-executor"
 import { CheckoutTestPlan } from "./checkout-test-service"
 import {
   CHECKOUT_TEST_ORDER_POLICY_VERSION,
@@ -21,8 +22,12 @@ export interface CheckoutTestReport {
   selected_variant: { id: string | null; sku: string | null; unit_price: number | null } | null
   shipping_option: Record<string, unknown> | null
   payment_provider: Record<string, unknown> | null
+  duplicate_gate: CheckoutTestSnapshot["duplicate_gate"] | null
+  inventory_location_candidates: CheckoutTestSnapshot["inventory_location_candidates"]
   test_identity: { email: string; country_code: string; city: string }
   expected_totals: CheckoutTestPlan["totals"]
+  execution_started: boolean
+  execution: ExecutionResult | null
   gates: { blockers: Array<{ gate: string; stage: string }>; blocked_count: number }
   planned_actions: CheckoutTestPlan["stages"]
   commit_enabled: boolean
@@ -54,6 +59,7 @@ export function buildCheckoutTestReport(params: {
   commitEnabled: boolean
   actualMutations: number
   finalDecision: CheckoutTestDecision
+  execution?: ExecutionResult | null
 }): CheckoutTestReport {
   const { plan, snapshot } = params
   const p = snapshot?.product ?? null
@@ -80,8 +86,12 @@ export function buildCheckoutTestReport(params: {
       ? { ...snapshot.shipping_option }
       : null,
     payment_provider: snapshot?.payment_provider ? { ...snapshot.payment_provider } : null,
+    duplicate_gate: snapshot?.duplicate_gate ?? null,
+    inventory_location_candidates: snapshot?.inventory_location_candidates ?? [],
     test_identity: { email: TEST_EMAIL, country_code: TEST_ADDRESS.country_code, city: TEST_ADDRESS.city },
     expected_totals: plan.totals,
+    execution_started: params.execution?.execution_started ?? false,
+    execution: params.execution ?? null,
     gates: { blockers: plan.blockers, blocked_count: plan.blockers.length },
     planned_actions: plan.stages,
     commit_enabled: params.commitEnabled,

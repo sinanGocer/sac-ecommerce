@@ -7,7 +7,24 @@
  * YALNIZ plan; hiçbir cart/order/payment mutation yapılmaz.
  */
 
-export const CHECKOUT_TEST_ORDER_POLICY_VERSION = 1
+export const CHECKOUT_TEST_ORDER_POLICY_VERSION = 2
+
+/** Commit execution path sürümleri (fingerprint'e dahil). */
+export const EXECUTION_STRATEGY_VERSION = 1
+export const PRE_COMPLETE_GATE_VERSION = 1
+export const RECOVERY_STRATEGY_VERSION = 1
+export const CANCELLATION_STRATEGY_VERSION = 1
+
+/** Gerçek commit'te yürütülecek mutation sırası (sabit, fingerprint'e dahil). */
+export const MUTATION_SEQUENCE = [
+  "TEST_CART_CREATE",
+  "LINE_ITEM_ADD",
+  "EMAIL_AND_ADDRESS_SET",
+  "SHIPPING_METHOD_ADD",
+  "PAYMENT_COLLECTION_CREATE",
+  "PAYMENT_SESSION_INITIALIZE",
+  "CART_COMPLETE",
+] as const
 
 /** Ayırt edilebilir test e-postası (dışarıya teslim edilmez — .invalid TLD). */
 export const TEST_EMAIL = "checkout-e2e-test@invalid.example"
@@ -98,6 +115,19 @@ export interface PaymentProviderSnap {
   is_enabled: boolean
 }
 
+export interface InventoryLocationCandidate {
+  location_id: string
+  name: string | null
+  available: number
+  in_sales_channel: boolean
+}
+
+export interface DuplicateGateState {
+  active_test_order_count: number
+  active_test_order_ids: string[]
+  marker: "metadata" | "email" | "none"
+}
+
 export interface CheckoutTestSnapshot {
   region_id: string | null
   region_currency: string | null
@@ -109,6 +139,8 @@ export interface CheckoutTestSnapshot {
   product: ProductSnap | null
   shipping_option: ShippingOptionSnap | null
   payment_provider: PaymentProviderSnap | null
+  inventory_location_candidates: InventoryLocationCandidate[]
+  duplicate_gate: DuplicateGateState
 }
 
 export type StageId =

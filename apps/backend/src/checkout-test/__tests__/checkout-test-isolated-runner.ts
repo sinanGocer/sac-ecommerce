@@ -7,6 +7,10 @@ import {
   CheckoutTestFingerprintPayload,
 } from "../checkout-test-fingerprint"
 import {
+  ExecutionDeps,
+  executeCheckoutTestOrder,
+} from "../checkout-test-executor"
+import {
   computeExpectedTotals,
   evaluateCostGate,
   evaluatePreComplete,
@@ -62,6 +66,11 @@ function validSnapshot(): CheckoutTestSnapshot {
       is_europe: false,
     },
     payment_provider: { id: PAYMENT_PROVIDER_ID, is_enabled: true },
+    inventory_location_candidates: [
+      { location_id: "sloc_eu", name: "European Warehouse", available: 1000, in_sales_channel: true },
+      { location_id: "sloc_tr", name: "Türkiye Deposu", available: 0, in_sales_channel: true },
+    ],
+    duplicate_gate: { active_test_order_count: 0, active_test_order_ids: [], marker: "none" },
   }
 }
 
@@ -113,7 +122,7 @@ function noSqlGuard(): void {
   ok(/query\.graph/.test(script), "script uses Medusa public layer")
 }
 
-function main(): void {
+async function main(): Promise<void> {
   // 1) Published + satın alınabilir → ready
   const happy = planCheckoutTest(validSnapshot())
   ok(
@@ -172,7 +181,10 @@ function main(): void {
   ok(computeCheckoutTestFingerprint(payload) !== computeCheckoutTestFingerprint({ ...payload, unit_price: 170, expected_subtotal: 170, expected_grand_total: 229 }), "17 product price changes fp")
   ok(computeCheckoutTestFingerprint(payload) !== computeCheckoutTestFingerprint({ ...payload, shipping_amount: 79, expected_shipping_total: 79, expected_grand_total: 248 }), "18 shipping price changes fp")
   ok(computeCheckoutTestFingerprint(payload) !== computeCheckoutTestFingerprint({ ...payload, payment_provider_id: "pp_stripe_stripe" }), "19 provider changes fp")
-  ok(computeCheckoutTestFingerprint(payload) !== computeCheckoutTestFingerprint({ ...payload, policy_version: 2 }), "19b policy version changes fp")
+  ok(computeCheckoutTestFingerprint(payload) !== computeCheckoutTestFingerprint({ ...payload, policy_version: 99 }), "19b policy version changes fp")
+  // v2 execution path alanları fingerprint'i etkiler
+  ok(computeCheckoutTestFingerprint(payload) !== computeCheckoutTestFingerprint({ ...payload, execution_strategy_version: 2 }), "19c execution strategy changes fp")
+  ok(computeCheckoutTestFingerprint(payload) !== computeCheckoutTestFingerprint({ ...payload, selected_inventory_location_candidates: ["sloc_x"] }), "19d inventory candidates change fp")
 
   // 20) Pre-complete cart drift → blocked (variant)
   ok(!evaluatePreComplete(({ ...validCartState(), line: { variant_id: "var_x", quantity: 1, unit_price: 169 } }), preExpected()).ok, "20 pre-complete variant drift")
@@ -214,12 +226,169 @@ function main(): void {
   // ek) totals helper deterministik (tax_rate 0)
   ok(computeExpectedTotals(validSnapshot()).grand_total === 228, "ek totals 228")
 
+  // policy v2 doğrulaması
+  ok(CHECKOUT_TEST_ORDER_POLICY_VERSION === 2, "policy version is 2")
+
+  // ── Commit execution (fake adapter; canlı mutation YOK) ───────────────────
+  await runExecutorAsync()
+
   console.log(`CHECKOUT TEST ORDER ISOLATED TESTS: ${passed} PASSED`)
 }
 
-try {
-  main()
-} catch (e) {
+// ── Fake execution deps ───────────────────────────────────────────────────────
+
+interface FakeOptions {
+  duplicate?: boolean
+  failAt?: string
+  preCompleteState?: Partial<CartStateForComplete>
+  completeReturnsCart?: boolean
+  readBackFails?: boolean
+  providerOverride?: string
+}
+
+function fakeDeps(calls: string[], opt: FakeOptions = {}): ExecutionDeps {
+  const boom = (stage: string) => {
+    if (opt.failAt === stage) throw new Error(`fail:${stage}`)
+  }
+  return {
+    findActiveDuplicateTestOrder: async () => {
+      calls.push("dup")
+      return { exists: !!opt.duplicate, order_ids: opt.duplicate ? ["order_existing"] : [] }
+    },
+    createCart: async () => { calls.push("createCart"); boom("createCart"); return { cart_id: "cart_1" } },
+    addLineItem: async () => { calls.push("addLineItem"); boom("addLineItem"); return { line_item_id: "li_1" } },
+    setEmailAndAddress: async () => { calls.push("setEmailAndAddress"); boom("setEmailAndAddress") },
+    addShippingMethod: async () => { calls.push("addShippingMethod"); boom("addShippingMethod"); return { shipping_method_id: "sm_1" } },
+    initPaymentSession: async () => {
+      calls.push("initPaymentSession"); boom("initPaymentSession")
+      return { payment_collection_id: "pc_1", payment_session_id: "ps_1", provider_id: opt.providerOverride ?? PAYMENT_PROVIDER_ID, status: "pending" }
+    },
+    retrieveCartForComplete: async () => {
+      calls.push("retrieve")
+      return { ...validCartState(), ...(opt.preCompleteState ?? {}) }
+    },
+    completeCart: async () => {
+      calls.push("completeCart"); boom("completeCart")
+      return opt.completeReturnsCart ? { type: "cart" as const, order_id: null } : { type: "order" as const, order_id: "order_1" }
+    },
+    retrieveOrder: async () => {
+      calls.push("retrieveOrder")
+      if (opt.readBackFails) throw new Error("read-back fail")
+      return {
+        id: "order_1", display_id: 1, email: TEST_EMAIL, currency_code: "try", item_count: 1,
+        variant_ids: [EXPECTED_PRODUCT.variant_id], item_subtotal: 169, shipping_total: 59, tax_total: 0,
+        grand_total: 228, shipping_country: "tr", status: "pending", payment_status: "authorized",
+        fulfillment_status: "not_fulfilled", metadata: { test_order: true },
+      }
+    },
+  }
+}
+
+function expectedForExec(): PreCompleteExpected & { payment_provider_id: string } {
+  return { ...preExpected(), payment_provider_id: PAYMENT_PROVIDER_ID }
+}
+
+async function runExecutorAsync(): Promise<void> {
+  // ex1) Doğru akış → COMMITTED, sıra doğru, complete tek kez
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls), expectedForExec())
+    ok(
+      r.decision === "EXECUTION_COMMITTED" &&
+        r.mutation_sequence.join(",") === "TEST_CART_CREATE,LINE_ITEM_ADD,EMAIL_AND_ADDRESS_SET,SHIPPING_METHOD_ADD,PAYMENT_COLLECTION_CREATE,PAYMENT_SESSION_INITIALIZE,CART_COMPLETE" &&
+        calls.filter((c) => c === "completeCart").length === 1 &&
+        r.created_ids.order_id === "order_1" &&
+        r.actual_mutations === 7,
+      "ex1 full chain committed, complete once, ids recorded"
+    )
+  }
+  // ex2) Duplicate → cart create yok
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls, { duplicate: true }), expectedForExec())
+    ok(r.decision === "EXECUTION_DUPLICATE_BLOCKED" && !calls.includes("createCart") && r.actual_mutations === 0, "ex2 duplicate blocks create")
+  }
+  // ex3) createCart fail → sonraki yok
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls, { failAt: "createCart" }), expectedForExec())
+    ok(r.decision === "EXECUTION_PARTIAL_FAILURE" && !calls.includes("addLineItem") && !calls.includes("completeCart"), "ex3 cart create fail aborts")
+  }
+  // ex4) addLineItem fail → complete yok
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls, { failAt: "addLineItem" }), expectedForExec())
+    ok(r.partial_failure?.stage === "LINE_ITEM_ADD" && !calls.includes("completeCart"), "ex4 line add fail no complete")
+  }
+  // ex5) address fail → complete yok
+  {
+    const calls: string[] = []
+    await executeCheckoutTestOrder(fakeDeps(calls, { failAt: "setEmailAndAddress" }), expectedForExec())
+    ok(!calls.includes("completeCart"), "ex5 address fail no complete")
+  }
+  // ex6) shipping fail → payment/complete yok
+  {
+    const calls: string[] = []
+    await executeCheckoutTestOrder(fakeDeps(calls, { failAt: "addShippingMethod" }), expectedForExec())
+    ok(!calls.includes("initPaymentSession") && !calls.includes("completeCart"), "ex6 shipping fail no payment/complete")
+  }
+  // ex7) payment init fail → complete yok
+  {
+    const calls: string[] = []
+    await executeCheckoutTestOrder(fakeDeps(calls, { failAt: "initPaymentSession" }), expectedForExec())
+    ok(!calls.includes("completeCart"), "ex7 payment fail no complete")
+  }
+  // ex8) provider drift → complete yok
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls, { providerOverride: "pp_stripe_stripe" }), expectedForExec())
+    ok(!calls.includes("completeCart") && /provider_mismatch/.test(r.partial_failure?.error ?? ""), "ex8 provider drift no complete")
+  }
+  // ex9) pre-complete drift (extra line) → complete çağrısı 0
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls, { preCompleteState: { item_count: 2 } }), expectedForExec())
+    ok(r.decision === "EXECUTION_PRE_COMPLETE_BLOCKED" && !calls.includes("completeCart"), "ex9 extra line drift no complete")
+  }
+  // ex10) total drift → complete yok
+  {
+    const calls: string[] = []
+    await executeCheckoutTestOrder(fakeDeps(calls, { preCompleteState: { total: 999 } }), expectedForExec())
+    ok(!calls.includes("completeCart"), "ex10 total drift no complete")
+  }
+  // ex11) quantity drift → complete yok
+  {
+    const calls: string[] = []
+    await executeCheckoutTestOrder(fakeDeps(calls, { preCompleteState: { line: { variant_id: EXPECTED_PRODUCT.variant_id, quantity: 3, unit_price: 169 } } }), expectedForExec())
+    ok(!calls.includes("completeCart"), "ex11 quantity drift no complete")
+  }
+  // ex12) completed cart drift → complete yok
+  {
+    const calls: string[] = []
+    await executeCheckoutTestOrder(fakeDeps(calls, { preCompleteState: { completed_at: "2026-01-01" } }), expectedForExec())
+    ok(!calls.includes("completeCart"), "ex12 completed drift no complete")
+  }
+  // ex13) complete order döndürmedi → partial, retry yok
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls, { completeReturnsCart: true }), expectedForExec())
+    ok(r.decision === "EXECUTION_PARTIAL_FAILURE" && calls.filter((c) => c === "completeCart").length === 1 && !calls.includes("retrieveOrder"), "ex13 complete no order partial, no retry")
+  }
+  // ex14) read-back fail → partial verification, complete tekrar yok
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls, { readBackFails: true }), expectedForExec())
+    ok(r.decision === "EXECUTION_PARTIAL_VERIFICATION" && calls.filter((c) => c === "completeCart").length === 1 && r.created_ids.order_id === "order_1", "ex14 read-back fail partial verification")
+  }
+  // ex15) complete fail → partial, kör retry yok
+  {
+    const calls: string[] = []
+    const r = await executeCheckoutTestOrder(fakeDeps(calls, { failAt: "completeCart" }), expectedForExec())
+    ok(r.decision === "EXECUTION_PARTIAL_FAILURE" && calls.filter((c) => c === "completeCart").length === 1, "ex15 complete fail no blind retry")
+  }
+}
+
+main().catch((e: unknown) => {
   console.error("CHECKOUT TEST FAILED:", e instanceof Error ? e.message : e)
   process.exit(1)
-}
+})

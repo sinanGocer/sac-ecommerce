@@ -3,16 +3,37 @@ import path from "path"
 
 import { ExecArgs } from "@medusajs/framework/types"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
+import {
+  addShippingMethodToCartWorkflow,
+  addToCartWorkflow,
+  completeCartWorkflow,
+  createCartWorkflow,
+  createPaymentCollectionForCartWorkflow,
+  createPaymentSessionsWorkflow,
+  updateCartWorkflow,
+} from "@medusajs/medusa/core-flows"
 
+import {
+  ExecutionDeps,
+  ExecutionResult,
+  executeCheckoutTestOrder,
+} from "../checkout-test/checkout-test-executor"
+import { PreCompleteExpected } from "../checkout-test/checkout-test-plan"
 import { isCheckoutTestConfirmationValid } from "../checkout-test/checkout-test-fingerprint"
 import {
   CheckoutTestDecision,
   CheckoutTestSnapshot,
+  DuplicateGateState,
   EXPECTED_PRODUCT,
   EXPECTED_SHIPPING,
+  InventoryLocationCandidate,
   PAYMENT_PROVIDER_ID,
   ProductSnap,
+  QUANTITY,
   ShippingOptionSnap,
+  TEST_ADDRESS,
+  TEST_EMAIL,
+  TEST_METADATA,
 } from "../checkout-test/checkout-test-policy"
 import { planCheckoutTest } from "../checkout-test/checkout-test-service"
 import { buildCheckoutTestReport } from "../checkout-test/checkout-test-report"
@@ -45,18 +66,36 @@ export default async function checkoutTestOrder({ container }: ExecArgs) {
 
   let actualMutations = 0
   let finalDecision: CheckoutTestDecision = plan.decision
+  let execution: ExecutionResult | null = null
 
   if (mode === "commit") {
-    // Fail-closed: bu araç commit yolunu yalnız açık onayla yürütür.
+    // ── Fail-closed execution guard ──────────────────────────────────────────
     if (plan.decision !== "CHECKOUT_TEST_ORDER_DRY_RUN_READY" || !plan.plan_fingerprint) {
-      throw new Error(`[checkout:test] Fail-closed: plan commit'e uygun değil (decision=${plan.decision}).`)
+      throw new Error(`[checkout:test] Fail-closed: plan commit'e uygun değil (decision=${plan.decision}). Mutation yapılmadı.`)
     }
     if (!isCheckoutTestConfirmationValid(confirmToken, plan.plan_fingerprint)) {
       throw new Error("[checkout:test] Fail-closed: CHECKOUT_TEST_CONFIRM plan_fingerprint ile eşleşmiyor. Mutation yapılmadı.")
     }
-    // Gerçek sipariş oluşturma bu görev kapsamında DEĞİL — ayrı onaylı adımda
-    // etkinleştirilir. Buraya kadar gelinse bile fail-closed durur.
-    throw new Error("[checkout:test] Commit yürütme ayrı onaylı adımda etkinleştirilir; bu derlemede devre dışı (fail-closed).")
+    if (!snapshot.product || !snapshot.shipping_option || !snapshot.region_id || !snapshot.sales_channel_id) {
+      throw new Error("[checkout:test] Fail-closed: zorunlu kaynaklar çözülemedi. Mutation yapılmadı.")
+    }
+
+    const expected: PreCompleteExpected & { payment_provider_id: string } = {
+      email: TEST_EMAIL,
+      variant_id: snapshot.product.variant_id!,
+      quantity: QUANTITY,
+      unit_price: snapshot.product.unit_price!,
+      shipping_option_id: snapshot.shipping_option.id,
+      shipping_amount: snapshot.shipping_option.amount!,
+      country_code: "tr",
+      payment_provider_id: PAYMENT_PROVIDER_ID,
+      grand_total: plan.totals.grand_total,
+    }
+    const deps = buildExecutionDeps(container, query, snapshot)
+    execution = await executeCheckoutTestOrder(deps, expected)
+    actualMutations = execution.actual_mutations
+    finalDecision =
+      execution.decision === "EXECUTION_COMMITTED" ? "CHECKOUT_TEST_ORDER_COMMITTED" : plan.decision
   }
 
   const finishedAt = new Date().toISOString()
@@ -72,6 +111,7 @@ export default async function checkoutTestOrder({ container }: ExecArgs) {
     commitEnabled,
     actualMutations,
     finalDecision,
+    execution,
   })
 
   await writeReport(report)
@@ -184,6 +224,9 @@ async function collectSnapshot(query: QueryGraph): Promise<CheckoutTestSnapshot>
   const { data: pps } = await query.graph({ entity: "payment_provider", fields: ["id", "is_enabled"] })
   const ppRow = ((pps ?? []) as Array<any>).find((p) => p.id === PAYMENT_PROVIDER_ID) ?? null
 
+  const inventoryCandidates = await inventoryLocationCandidates(query, product?.variant_id ?? null, scLocationIds)
+  const duplicateGate = await duplicateTestOrderGate(query)
+
   return {
     region_id: trRegion?.id ?? null,
     region_currency: trRegion?.currency_code ?? null,
@@ -195,6 +238,65 @@ async function collectSnapshot(query: QueryGraph): Promise<CheckoutTestSnapshot>
     product,
     shipping_option,
     payment_provider: ppRow ? { id: ppRow.id, is_enabled: ppRow.is_enabled !== false } : null,
+    inventory_location_candidates: inventoryCandidates,
+    duplicate_gate: duplicateGate,
+  }
+}
+
+async function inventoryLocationCandidates(
+  query: QueryGraph,
+  variantId: string | null,
+  scLocationIds: Set<string>
+): Promise<InventoryLocationCandidate[]> {
+  if (!variantId) return []
+  try {
+    const { data } = await query.graph({
+      entity: "product_variant_inventory_items",
+      fields: [
+        "variant_id",
+        "inventory.location_levels.location_id",
+        "inventory.location_levels.stocked_quantity",
+        "inventory.location_levels.reserved_quantity",
+        "inventory.location_levels.stock_locations.name",
+      ],
+      filters: { variant_id: [variantId] },
+    })
+    const out: InventoryLocationCandidate[] = []
+    for (const link of (data ?? []) as Array<any>) {
+      for (const lvl of link.inventory?.location_levels ?? []) {
+        const available = Math.max(0, Number(lvl.stocked_quantity ?? 0) - Number(lvl.reserved_quantity ?? 0))
+        out.push({
+          location_id: lvl.location_id,
+          name: (lvl.stock_locations ?? [])[0]?.name ?? null,
+          available,
+          in_sales_channel: scLocationIds.has(lvl.location_id),
+        })
+      }
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+async function duplicateTestOrderGate(query: QueryGraph): Promise<DuplicateGateState> {
+  // Metadata order'a aktarımı garanti değil → email marker'ı ile aktif test order ara.
+  try {
+    const { data } = await query.graph({
+      entity: "order",
+      fields: ["id", "email", "status", "canceled_at"],
+      filters: { email: TEST_EMAIL },
+    })
+    const active = ((data ?? []) as Array<any>).filter(
+      (o) => o.canceled_at == null && o.status !== "canceled"
+    )
+    return {
+      active_test_order_count: active.length,
+      active_test_order_ids: active.map((o) => o.id),
+      marker: active.length > 0 ? "email" : "none",
+    }
+  } catch {
+    return { active_test_order_count: 0, active_test_order_ids: [], marker: "none" }
   }
 }
 
@@ -227,6 +329,162 @@ async function reservableQuantity(
     return total
   } catch {
     return 0
+  }
+}
+
+// ── Commit execution deps (Medusa public workflow/Store API zinciri) ─────────
+// NOT: bu görevde commit modu ÇALIŞTIRILMAZ. Aşağıdaki bağlama gerçek mutation
+// zinciridir ve yalnız fail-closed guard geçtikten sonra (ayrı onaylı adım)
+// devreye girer. Mantık/sıra/guard'lar checkout-test-executor'da test edilir.
+
+function buildExecutionDeps(
+  container: ExecArgs["container"],
+  query: QueryGraph,
+  snapshot: CheckoutTestSnapshot
+): ExecutionDeps {
+  const variantId = snapshot.product!.variant_id!
+  const optionId = snapshot.shipping_option!.id
+  return {
+    findActiveDuplicateTestOrder: async () => ({
+      exists: snapshot.duplicate_gate.active_test_order_count > 0,
+      order_ids: snapshot.duplicate_gate.active_test_order_ids,
+    }),
+    createCart: async () => {
+      const { result } = await createCartWorkflow(container).run({
+        input: {
+          region_id: snapshot.region_id!,
+          sales_channel_id: snapshot.sales_channel_id!,
+          currency_code: "try",
+        } as any,
+      })
+      return { cart_id: (result as any).id }
+    },
+    addLineItem: async (cartId: string) => {
+      await addToCartWorkflow(container).run({
+        input: { cart_id: cartId, items: [{ variant_id: variantId, quantity: QUANTITY }] } as any,
+      })
+      const id = await firstChildId(query, "cart", cartId, "items")
+      return { line_item_id: id ?? "" }
+    },
+    setEmailAndAddress: async (cartId: string) => {
+      await updateCartWorkflow(container).run({
+        input: {
+          id: cartId,
+          email: TEST_EMAIL,
+          shipping_address: { ...TEST_ADDRESS },
+          billing_address: { ...TEST_ADDRESS },
+          metadata: { ...TEST_METADATA },
+        } as any,
+      })
+    },
+    addShippingMethod: async (cartId: string) => {
+      await addShippingMethodToCartWorkflow(container).run({
+        input: { cart_id: cartId, options: [{ id: optionId }] } as any,
+      })
+      const id = await firstChildId(query, "cart", cartId, "shipping_methods")
+      return { shipping_method_id: id ?? "" }
+    },
+    initPaymentSession: async (cartId: string) => {
+      const { result: pc } = await createPaymentCollectionForCartWorkflow(container).run({
+        input: { cart_id: cartId } as any,
+      })
+      const collectionId = (pc as any)?.id ?? null
+      await createPaymentSessionsWorkflow(container).run({
+        input: { payment_collection_id: collectionId, provider_id: PAYMENT_PROVIDER_ID } as any,
+      })
+      const { data } = await query.graph({
+        entity: "payment_collection",
+        fields: ["id", "payment_sessions.id", "payment_sessions.provider_id", "payment_sessions.status"],
+        filters: { id: collectionId },
+      })
+      const session = (((data ?? [])[0] as any)?.payment_sessions ?? [])[0] ?? null
+      return {
+        payment_collection_id: collectionId,
+        payment_session_id: session?.id ?? null,
+        provider_id: session?.provider_id ?? null,
+        status: session?.status ?? null,
+      }
+    },
+    retrieveCartForComplete: async (cartId: string) => {
+      const { data } = await query.graph({
+        entity: "cart",
+        fields: [
+          "id", "email", "completed_at", "currency_code",
+          "items.id", "items.variant_id", "items.product_id", "items.quantity", "items.unit_price",
+          "shipping_methods.id", "shipping_methods.shipping_option_id", "shipping_methods.amount",
+          "shipping_address.country_code",
+          "payment_collection.payment_sessions.provider_id",
+          "total",
+        ],
+        filters: { id: cartId },
+      })
+      const c = (data ?? [])[0] as any
+      const item = (c?.items ?? [])[0] ?? null
+      const sm = (c?.shipping_methods ?? [])[0] ?? null
+      const ps = (c?.payment_collection?.payment_sessions ?? [])[0] ?? null
+      return {
+        created_by_this_run: true,
+        email: c?.email ?? null,
+        item_count: (c?.items ?? []).length,
+        line: item ? { variant_id: item.variant_id, quantity: item.quantity, unit_price: item.unit_price } : null,
+        shipping_option_id: sm?.shipping_option_id ?? null,
+        shipping_amount: typeof sm?.amount === "number" ? sm.amount : null,
+        country_code: c?.shipping_address?.country_code ?? null,
+        payment_provider_id: ps?.provider_id ?? null,
+        completed_at: c?.completed_at ?? null,
+        order_reference_count: c?.completed_at ? 1 : 0,
+        total: typeof c?.total === "number" ? c.total : Number(c?.total ?? 0),
+      }
+    },
+    completeCart: async (cartId: string) => {
+      const { result } = await completeCartWorkflow(container).run({ input: { id: cartId } as any })
+      const orderId = (result as any)?.id ?? null
+      return { type: orderId ? "order" : "cart", order_id: orderId }
+    },
+    retrieveOrder: async (orderId: string) => {
+      const { data } = await query.graph({
+        entity: "order",
+        fields: [
+          "id", "display_id", "email", "currency_code", "status",
+          "items.id", "items.variant_id", "item_subtotal", "shipping_total", "tax_total", "total",
+          "shipping_address.country_code", "payment_status", "fulfillment_status", "metadata",
+        ],
+        filters: { id: orderId },
+      })
+      const o = (data ?? [])[0] as any
+      return {
+        id: o?.id ?? orderId,
+        display_id: o?.display_id ?? null,
+        email: o?.email ?? null,
+        currency_code: o?.currency_code ?? null,
+        item_count: (o?.items ?? []).length,
+        variant_ids: (o?.items ?? []).map((i: any) => i.variant_id).filter(Boolean),
+        item_subtotal: typeof o?.item_subtotal === "number" ? o.item_subtotal : null,
+        shipping_total: typeof o?.shipping_total === "number" ? o.shipping_total : null,
+        tax_total: typeof o?.tax_total === "number" ? o.tax_total : null,
+        grand_total: typeof o?.total === "number" ? o.total : null,
+        shipping_country: o?.shipping_address?.country_code ?? null,
+        status: o?.status ?? null,
+        payment_status: o?.payment_status ?? null,
+        fulfillment_status: o?.fulfillment_status ?? null,
+        metadata: o?.metadata ?? null,
+      }
+    },
+  }
+}
+
+async function firstChildId(
+  query: QueryGraph,
+  entity: string,
+  id: string,
+  relation: string
+): Promise<string | null> {
+  try {
+    const { data } = await query.graph({ entity, fields: ["id", `${relation}.id`], filters: { id } })
+    const rows = ((data ?? [])[0] as any)?.[relation] ?? []
+    return rows[0]?.id ?? null
+  } catch {
+    return null
   }
 }
 

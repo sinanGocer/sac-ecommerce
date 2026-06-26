@@ -12,12 +12,17 @@ import {
 } from "./checkout-test-fingerprint"
 import { evaluateCheckoutTestStages } from "./checkout-test-plan"
 import {
+  CANCELLATION_STRATEGY_VERSION,
   CHECKOUT_TEST_ORDER_POLICY_VERSION,
   CheckoutTestDecision,
   CheckoutTestSnapshot,
   COUNTRY_CODE,
+  EXECUTION_STRATEGY_VERSION,
   ExpectedTotals,
+  MUTATION_SEQUENCE,
+  PRE_COMPLETE_GATE_VERSION,
   QUANTITY,
+  RECOVERY_STRATEGY_VERSION,
   StageResult,
   TEST_ADDRESS,
   TEST_EMAIL,
@@ -77,6 +82,10 @@ export function planCheckoutTest(
   }
 
   const { stages, totals, blockers } = evaluateCheckoutTestStages(snapshot)
+  // Duplicate test-order gate: aktif (iptal edilmemiş) test order varsa block.
+  if (snapshot.duplicate_gate.active_test_order_count > 0) {
+    blockers.push({ gate: "active_test_order_exists", stage: "TEST_CART_CREATE" })
+  }
   const estimatedMutations = stages.reduce((sum, s) => sum + s.estimated_mutations, 0)
 
   let decision: CheckoutTestDecision = "CHECKOUT_TEST_ORDER_DRY_RUN_READY"
@@ -111,6 +120,19 @@ export function planCheckoutTest(
       expected_tax_total: totals.tax_total,
       expected_grand_total: totals.grand_total,
       planned_actions: stages.map((s) => ({ stage: s.stage, status: s.status })),
+      execution_strategy_version: EXECUTION_STRATEGY_VERSION,
+      mutation_sequence: [...MUTATION_SEQUENCE],
+      duplicate_order_gate: {
+        active_test_order_count: snapshot.duplicate_gate.active_test_order_count,
+        marker: snapshot.duplicate_gate.marker,
+      },
+      pre_complete_gate_version: PRE_COMPLETE_GATE_VERSION,
+      recovery_strategy_version: RECOVERY_STRATEGY_VERSION,
+      selected_inventory_location_candidates: snapshot.inventory_location_candidates
+        .filter((c) => c.in_sales_channel && c.available > 0)
+        .map((c) => c.location_id)
+        .sort(),
+      cancellation_strategy_version: CANCELLATION_STRATEGY_VERSION,
     }
     planFingerprint = computeCheckoutTestFingerprint(fingerprintPayload)
   }

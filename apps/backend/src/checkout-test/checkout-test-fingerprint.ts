@@ -30,6 +30,14 @@ export interface CheckoutTestFingerprintPayload {
   expected_tax_total: number
   expected_grand_total: number
   planned_actions: Array<{ stage: string; status: string }>
+  // v2 commit execution path
+  execution_strategy_version: number
+  mutation_sequence: string[]
+  duplicate_order_gate: { active_test_order_count: number; marker: string }
+  pre_complete_gate_version: number
+  recovery_strategy_version: number
+  selected_inventory_location_candidates: string[]
+  cancellation_strategy_version: number
 }
 
 function sha16(value: string): string {
@@ -71,6 +79,13 @@ export function computeCheckoutTestFingerprint(
     expected_tax_total: payload.expected_tax_total,
     expected_grand_total: payload.expected_grand_total,
     planned_actions: payload.planned_actions.map((a) => ({ stage: a.stage, status: a.status })),
+    execution_strategy_version: payload.execution_strategy_version,
+    mutation_sequence: payload.mutation_sequence,
+    duplicate_order_gate: payload.duplicate_order_gate,
+    pre_complete_gate_version: payload.pre_complete_gate_version,
+    recovery_strategy_version: payload.recovery_strategy_version,
+    selected_inventory_location_candidates: [...payload.selected_inventory_location_candidates].sort(),
+    cancellation_strategy_version: payload.cancellation_strategy_version,
   })
   return sha16(canonical)
 }
