@@ -1,4 +1,5 @@
 import { HttpTypes } from "@medusajs/types"
+import { normalizeProductDescription } from "@lib/util/product-description"
 
 /**
  * Ürün detay bölümleri. İçerik öncelikle product.metadata'dan okunur,
@@ -30,7 +31,7 @@ const Section = ({
 
 export default function ProductDetailsSections({ product }: Props) {
   const description =
-    product.description ||
+    normalizeProductDescription(product.description) ||
     "Profesyonel salon kalitesinde, saçınızın ihtiyacına göre özenle seçilmiş bir üründür."
 
   const suitableFor =

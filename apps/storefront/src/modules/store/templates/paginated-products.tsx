@@ -3,8 +3,9 @@ import { getRegion } from "@lib/data/regions"
 import ProductPreview from "@modules/products/components/product-preview"
 import { Pagination } from "@modules/store/components/pagination"
 import { SortOptions } from "@modules/store/components/refinement-list/sort-products"
+import { DEFAULT_CATALOG_PAGE_SIZE } from "@lib/util/catalog-pagination"
 
-const PRODUCT_LIMIT = 12
+const PRODUCT_LIMIT = DEFAULT_CATALOG_PAGE_SIZE
 
 type PaginatedProductsParams = {
   limit: number
@@ -30,7 +31,7 @@ export default async function PaginatedProducts({
   countryCode: string
 }) {
   const queryParams: PaginatedProductsParams = {
-    limit: 12,
+    limit: PRODUCT_LIMIT,
   }
 
   if (collectionId) {
@@ -46,7 +47,9 @@ export default async function PaginatedProducts({
   }
 
   if (sortBy === "created_at") {
-    queryParams["order"] = "created_at"
+    // Medusa bulk creates share the same created_at timestamp. ULID ids keep
+    // newest-first ordering deterministic across offset pages.
+    queryParams["order"] = "-id"
   }
 
   const region = await getRegion(countryCode)
@@ -57,6 +60,7 @@ export default async function PaginatedProducts({
 
   const {
     response: { products, count },
+    currentPage,
   } = await listProductsWithSort({
     page,
     queryParams,
@@ -72,10 +76,15 @@ export default async function PaginatedProducts({
         className="grid w-full grid-cols-2 gap-4 small:grid-cols-3 small:gap-6 medium:grid-cols-4"
         data-testid="products-list"
       >
-        {products.map((p) => {
+        {products.map((p, index) => {
           return (
             <li key={p.id} className="h-full">
-              <ProductPreview product={p} region={region} isFeatured />
+              <ProductPreview
+                product={p}
+                region={region}
+                isFeatured
+                priority={index < 4}
+              />
             </li>
           )
         })}
@@ -83,7 +92,7 @@ export default async function PaginatedProducts({
       {totalPages > 1 && (
         <Pagination
           data-testid="product-pagination"
-          page={page}
+          page={currentPage}
           totalPages={totalPages}
         />
       )}

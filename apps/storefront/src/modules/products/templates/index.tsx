@@ -39,7 +39,11 @@ const ProductTemplate: React.FC<ProductTemplateProps> = ({
           <ProductInfo product={product} />
         </div>
         <div className="block w-full relative">
-          <ImageGallery images={images} />
+          <ImageGallery
+            images={images}
+            thumbnail={product.thumbnail}
+            productTitle={product.title}
+          />
         </div>
         <div className="flex flex-col small:sticky small:top-48 small:py-0 small:max-w-[300px] w-full py-8 gap-y-12">
           <ProductOnboardingCta />

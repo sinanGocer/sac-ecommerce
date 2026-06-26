@@ -9,10 +9,12 @@ import AddToCartCard from "./add-to-cart-card"
 export default async function ProductPreview({
   product,
   isFeatured,
+  priority,
   region: _region,
 }: {
   product: HttpTypes.StoreProduct
   isFeatured?: boolean
+  priority?: boolean
   region: HttpTypes.StoreRegion
 }) {
   const { cheapestPrice } = getProductPrice({ product })
@@ -22,6 +24,11 @@ export default async function ProductPreview({
   const badge =
     (product.metadata?.badge as string | undefined) || "Profesyonel Seri"
   const isTop = badge === "En Çok Tercih Edilen"
+  const sizeMl =
+    typeof product.metadata?.size_ml === "number"
+      ? product.metadata.size_ml
+      : null
+  const isTravel = product.metadata?.size_type === "travel"
 
   return (
     <div
@@ -49,6 +56,8 @@ export default async function ProductPreview({
             images={product.images}
             size="full"
             isFeatured={isFeatured}
+            priority={priority}
+            alt={`${product.title} görseli`}
             className="!rounded-none !bg-transparent !p-0 !shadow-none transition-transform duration-500 group-hover:scale-105"
           />
         </div>
@@ -59,6 +68,20 @@ export default async function ProductPreview({
           >
             {product.title}
           </Text>
+          {(sizeMl || isTravel) && (
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {sizeMl && (
+                <span className="bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-700">
+                  {sizeMl} ml
+                </span>
+              )}
+              {isTravel && (
+                <span className="bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-900">
+                  Seyahat Boy
+                </span>
+              )}
+            </div>
+          )}
           <div className="mt-1 flex items-center gap-x-2">
             {cheapestPrice ? (
               <PreviewPrice price={cheapestPrice} />

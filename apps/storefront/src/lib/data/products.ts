@@ -6,6 +6,14 @@ import { HttpTypes } from "@medusajs/types"
 import { SortOptions } from "@modules/store/components/refinement-list/sort-products"
 import { getAuthHeaders, getCacheOptions } from "./cookies"
 import { getRegion, retrieveRegion } from "./regions"
+import {
+  catalogTotalPages,
+  clampCatalogPage,
+  normalizeCatalogPage,
+} from "@lib/util/catalog-pagination"
+
+const cacheValue = (value?: string | string[]): string =>
+  Array.isArray(value) ? value.join(",") : value ?? ""
 
 export const listProducts = async ({
   pageParam = 1,
@@ -27,8 +35,8 @@ export const listProducts = async ({
   }
 
   const limit = queryParams?.limit || 12
-  const _pageParam = Math.max(pageParam, 1)
-  const offset = _pageParam === 1 ? 0 : (_pageParam - 1) * limit
+  const normalizedPage = normalizeCatalogPage(pageParam)
+  const offset = (normalizedPage - 1) * limit
 
   let region: HttpTypes.StoreRegion | undefined | null
 
@@ -49,9 +57,24 @@ export const listProducts = async ({
     ...(await getAuthHeaders()),
   }
 
-  const next = {
-    ...(await getCacheOptions("products")),
-  }
+  const cacheScope = [
+    "products",
+    region.id,
+    String(limit),
+    String(offset),
+    queryParams?.order ?? "default",
+    cacheValue(queryParams?.category_id) || "all-categories",
+    cacheValue(queryParams?.collection_id) || "all-collections",
+    cacheValue(queryParams?.id) || "all-products",
+  ].join("-")
+  const next = { ...(await getCacheOptions(cacheScope)) }
+  const fields =
+    queryParams?.fields ??
+    "*variants.calculated_price,+variants.inventory_quantity,*variants.images,+metadata,+tags,"
+  const filters = { ...queryParams }
+  delete filters.fields
+  delete filters.limit
+  delete filters.offset
 
   return sdk.client
     .fetch<{ products: HttpTypes.StoreProduct[]; count: number }>(
@@ -59,12 +82,11 @@ export const listProducts = async ({
       {
         method: "GET",
         query: {
+          ...filters,
           limit,
           offset,
           region_id: region?.id,
-          fields:
-            "*variants.calculated_price,+variants.inventory_quantity,*variants.images,+metadata,+tags,",
-          ...queryParams,
+          fields,
         },
         headers,
         next,
@@ -72,7 +94,8 @@ export const listProducts = async ({
       }
     )
     .then(({ products, count }) => {
-      const nextPage = count > offset + limit ? pageParam + 1 : null
+      const nextPage =
+        count > offset + limit ? normalizedPage + 1 : null
 
       return {
         response: {
@@ -86,11 +109,11 @@ export const listProducts = async ({
 }
 
 /**
- * This will fetch 100 products to the Next.js cache and sort them based on the sortBy parameter.
- * It will then return the paginated products based on the page and limit parameters.
+ * Price sorting still needs the bounded catalog set because Store API does not
+ * sort calculated prices. Other sorts use real Store API limit/offset paging.
  */
 export const listProductsWithSort = async ({
-  page = 0,
+  page = 1,
   queryParams,
   sortBy = "created_at",
   countryCode,
@@ -102,35 +125,56 @@ export const listProductsWithSort = async ({
 }): Promise<{
   response: { products: HttpTypes.StoreProduct[]; count: number }
   nextPage: number | null
+  currentPage: number
   queryParams?: HttpTypes.FindParams & HttpTypes.StoreProductParams
 }> => {
   const limit = queryParams?.limit || 12
+  const normalizedPage = normalizeCatalogPage(page)
 
-  const {
-    response: { products, count },
-  } = await listProducts({
-    pageParam: 0,
-    queryParams: {
-      ...queryParams,
-      limit: 100,
-    },
+  if (["price_asc", "price_desc"].includes(sortBy)) {
+    const {
+      response: { products, count },
+    } = await listProducts({
+      pageParam: 1,
+      queryParams: { ...queryParams, limit: 100 },
+      countryCode,
+    })
+
+    const sortedProducts = sortProducts(products, sortBy)
+    const totalPages = catalogTotalPages(count, limit)
+    const currentPage = clampCatalogPage(normalizedPage, totalPages)
+    const offset = (currentPage - 1) * limit
+
+    return {
+      response: {
+        products: sortedProducts.slice(offset, offset + limit),
+        count,
+      },
+      nextPage: currentPage < totalPages ? currentPage + 1 : null,
+      currentPage,
+      queryParams,
+    }
+  }
+
+  let result = await listProducts({
+    pageParam: normalizedPage,
+    queryParams: { ...queryParams, limit },
     countryCode,
   })
+  const totalPages = catalogTotalPages(result.response.count, limit)
+  const currentPage = clampCatalogPage(normalizedPage, totalPages)
 
-  const sortedProducts = sortProducts(products, sortBy)
-
-  const pageParam = (page - 1) * limit
-
-  const nextPage = count > pageParam + limit ? pageParam + limit : null
-
-  const paginatedProducts = sortedProducts.slice(pageParam, pageParam + limit)
+  if (currentPage !== normalizedPage) {
+    result = await listProducts({
+      pageParam: currentPage,
+      queryParams: { ...queryParams, limit },
+      countryCode,
+    })
+  }
 
   return {
-    response: {
-      products: paginatedProducts,
-      count,
-    },
-    nextPage,
+    ...result,
+    currentPage,
     queryParams,
   }
 }
