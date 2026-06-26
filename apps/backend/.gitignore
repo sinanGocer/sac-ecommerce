@@ -39,3 +39,12 @@ build
 
 # Catalog Batch Pipeline — izole test derleme çıktısı
 /.catalog-test-build
+
+# Catalog Product Quarantine — dry-run/commit raporları
+/catalog-cleanup-reports
+
+# Catalog Product Quarantine — izole test derleme çıktısı
+/.catalog-quarantine-test-build
+
+# Search Projection — izole test derleme çıktısı
+/.search-projection-test-build

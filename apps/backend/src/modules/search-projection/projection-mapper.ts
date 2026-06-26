@@ -10,6 +10,7 @@ import { BuilderProductInput } from "./search-projection.types"
 /** query.graph "product" için çekilecek hafif alanlar (N+1 yok: tek sorguda nested). */
 export const PRODUCT_GRAPH_FIELDS = [
   "id",
+  "status",
   "handle",
   "title",
   "thumbnail",
@@ -40,6 +41,7 @@ interface RawVariant {
 }
 export interface ProductGraphRow {
   id: string
+  status?: string | null
   handle?: string | null
   title?: string | null
   thumbnail?: string | null

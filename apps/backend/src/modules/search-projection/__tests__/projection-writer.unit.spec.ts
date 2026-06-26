@@ -59,6 +59,7 @@ function serviceWith(rows: PersistedProjection[]) {
     listProductSearchProjections: jest.fn().mockResolvedValue(rows),
     createProductSearchProjections: jest.fn().mockResolvedValue([]),
     updateProductSearchProjections: jest.fn().mockResolvedValue([]),
+    deleteProductSearchProjections: jest.fn().mockResolvedValue([]),
   }
 }
 

@@ -1,5 +1,6 @@
 import { createHash } from "crypto"
 
+import { PROJECTION_POLICY_VERSION } from "../modules/search-projection/projection-policy"
 import { PROJECTION_SCHEMA_VERSION } from "../modules/search-projection/search-projection.types"
 import { parseExternalIdAllowlist } from "../product-sync/utils/sync-config"
 
@@ -18,6 +19,7 @@ export interface BaseFingerprintPayload {
   sync_selection_policy_version: number
   metadata_policy_version: number
   projection_schema_version: number
+  projection_policy_version: number
 }
 
 export type FingerprintPolicy = Pick<
@@ -27,6 +29,7 @@ export type FingerprintPolicy = Pick<
   | "sync_selection_policy_version"
   | "metadata_policy_version"
   | "projection_schema_version"
+  | "projection_policy_version"
 >
 
 export interface PlanSummary {
@@ -75,6 +78,7 @@ export function buildBaseFingerprintPayload(
     sync_selection_policy_version: SYNC_SELECTION_POLICY_VERSION,
     metadata_policy_version: METADATA_POLICY_VERSION,
     projection_schema_version: PROJECTION_SCHEMA_VERSION,
+    projection_policy_version: PROJECTION_POLICY_VERSION,
   }
 }
 
@@ -89,6 +93,7 @@ export function computeBaseFingerprint(payload: BaseFingerprintPayload): string 
     sync_selection_policy_version: payload.sync_selection_policy_version,
     metadata_policy_version: payload.metadata_policy_version,
     projection_schema_version: payload.projection_schema_version,
+    projection_policy_version: payload.projection_policy_version,
   })
   return sha16(canonical)
 }
@@ -102,6 +107,7 @@ export function fingerprintPolicy(
     sync_selection_policy_version: payload.sync_selection_policy_version,
     metadata_policy_version: payload.metadata_policy_version,
     projection_schema_version: payload.projection_schema_version,
+    projection_policy_version: payload.projection_policy_version,
   }
 }
 

@@ -20,6 +20,18 @@ export interface UpsertResult {
   db_writes: number
 }
 
+/**
+ * Sync sonucu — upsert (yalnız projeksiyona uygun ürünler) + targeted delete
+ * (projeksiyon dışı kalmış ürünlerin stale kayıtları).
+ */
+export interface SyncResult {
+  created: number
+  updated: number
+  unchanged: number
+  deleted: number
+  db_writes: number
+}
+
 export interface UpsertOptions {
   dryRun?: boolean
 }
@@ -45,10 +57,54 @@ export interface ProjectionWriterService {
   updateProductSearchProjections(
     data: Array<WritableProjection & { id: string }>
   ): Promise<unknown>
+  deleteProductSearchProjections(ids: string[]): Promise<unknown>
 }
 
 export class ProjectionWriter {
   constructor(private readonly service: ProjectionWriterService) {}
+
+  /**
+   * Tek partide projeksiyon politikasını uygular:
+   *  - `projectable`: published ürünlerin projection'ları → idempotent upsert.
+   *  - `removableProductIds`: projeksiyon dışı (draft/proposed/rejected) ürünler;
+   *    KAPSAM içinde var olan projection'ları targeted delete edilir.
+   *
+   * Dry-run: hiçbir create/update/delete çağrılmaz (db_writes 0). RAW SQL yok.
+   * Idempotent: ikinci çalıştırmada silinecek/oluşturulacak kayıt kalmaz → no-op.
+   */
+  async syncBatch(
+    projectable: SearchProjection[],
+    removableProductIds: string[],
+    options: UpsertOptions = {}
+  ): Promise<SyncResult> {
+    const upsert = await this.upsertBatch(projectable, options)
+
+    let deleted = 0
+    const uniqueRemovable = [...new Set(removableProductIds)]
+    if (uniqueRemovable.length > 0) {
+      const existing = await this.service.listProductSearchProjections(
+        { product_id: uniqueRemovable },
+        { select: ["id", "product_id"], take: uniqueRemovable.length }
+      )
+      const ids = existing
+        .map((row) => row.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+      if (!options.dryRun && ids.length > 0) {
+        await this.service.deleteProductSearchProjections(ids)
+      }
+      deleted = ids.length
+    }
+
+    return {
+      created: upsert.created,
+      updated: upsert.updated,
+      unchanged: upsert.unchanged,
+      deleted,
+      db_writes: options.dryRun
+        ? 0
+        : upsert.created + upsert.updated + deleted,
+    }
+  }
 
   async upsertBatch(
     projections: SearchProjection[],
