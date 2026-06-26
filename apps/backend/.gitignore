@@ -54,3 +54,9 @@ build
 
 # Cart Line Cleanup — izole test derleme çıktısı
 /.cart-cleanup-test-build
+
+# TR Shipping Setup — dry-run/commit raporları
+/shipping-setup-reports
+
+# TR Shipping Setup — izole test derleme çıktısı
+/.shipping-setup-test-build
