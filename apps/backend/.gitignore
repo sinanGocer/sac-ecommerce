@@ -48,3 +48,9 @@ build
 
 # Search Projection — izole test derleme çıktısı
 /.search-projection-test-build
+
+# Cart Line Cleanup — dry-run/commit raporları
+/cart-cleanup-reports
+
+# Cart Line Cleanup — izole test derleme çıktısı
+/.cart-cleanup-test-build
