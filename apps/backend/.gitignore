@@ -78,3 +78,9 @@ build
 
 # Test Order Cancel — izole test derleme çıktısı
 /.test-order-cancel-test-build
+
+# iyzico Payment — dry-run raporları
+/iyzico-payment-reports
+
+# iyzico Payment — izole test derleme çıktısı
+/.iyzico-payment-build
