@@ -66,3 +66,9 @@ build
 
 # Checkout Test Order — izole test derleme çıktısı
 /.checkout-test-build
+
+# Partial Cart Cleanup — dry-run/commit raporları
+/partial-cart-reports
+
+# Partial Cart Cleanup — izole test derleme çıktısı
+/.partial-cart-test-build

@@ -16,6 +16,7 @@ import {
   CART_TOTAL_CONSISTENCY_GATE_VERSION,
   CHECKOUT_TEST_ORDER_POLICY_VERSION,
   CheckoutTestDecision,
+  DUPLICATE_GATE_VERSION,
   CheckoutTestSnapshot,
   COUNTRY_CODE,
   EXECUTION_STRATEGY_VERSION,
@@ -85,9 +86,12 @@ export function planCheckoutTest(
   }
 
   const { stages, totals, blockers } = evaluateCheckoutTestStages(snapshot)
-  // Duplicate test-order gate: aktif (iptal edilmemiş) test order varsa block.
+  // Duplicate gate (v2): aktif test ORDER veya aktif PARTIAL test CART varsa block.
   if (snapshot.duplicate_gate.active_test_order_count > 0) {
     blockers.push({ gate: "active_test_order_exists", stage: "TEST_CART_CREATE" })
+  }
+  if (snapshot.duplicate_gate.active_partial_cart_count > 0) {
+    blockers.push({ gate: "active_partial_test_cart_exists", stage: "TEST_CART_CREATE" })
   }
   const estimatedMutations = stages.reduce((sum, s) => sum + s.estimated_mutations, 0)
 
@@ -127,6 +131,8 @@ export function planCheckoutTest(
       mutation_sequence: [...MUTATION_SEQUENCE],
       duplicate_order_gate: {
         active_test_order_count: snapshot.duplicate_gate.active_test_order_count,
+        active_partial_cart_count: snapshot.duplicate_gate.active_partial_cart_count,
+        gate_version: DUPLICATE_GATE_VERSION,
         marker: snapshot.duplicate_gate.marker,
       },
       pre_complete_gate_version: PRE_COMPLETE_GATE_VERSION,

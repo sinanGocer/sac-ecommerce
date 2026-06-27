@@ -7,7 +7,10 @@
  * YALNIZ plan; hiçbir cart/order/payment mutation yapılmaz.
  */
 
-export const CHECKOUT_TEST_ORDER_POLICY_VERSION = 3
+export const CHECKOUT_TEST_ORDER_POLICY_VERSION = 4
+
+/** Duplicate gate sürümü: v2 = order + aktif partial test cart kapsar. */
+export const DUPLICATE_GATE_VERSION = 2
 
 /** Commit execution path sürümleri (fingerprint'e dahil). */
 export const EXECUTION_STRATEGY_VERSION = 1
@@ -130,6 +133,9 @@ export interface InventoryLocationCandidate {
 export interface DuplicateGateState {
   active_test_order_count: number
   active_test_order_ids: string[]
+  /** Aktif (completed_at null, silinmemiş) partial test cart'ları (yeni execution'ı bloklar). */
+  active_partial_cart_count: number
+  active_partial_cart_ids: string[]
   marker: "metadata" | "email" | "none"
 }
 

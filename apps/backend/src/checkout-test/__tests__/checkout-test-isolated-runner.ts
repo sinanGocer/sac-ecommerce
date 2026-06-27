@@ -75,7 +75,13 @@ function validSnapshot(): CheckoutTestSnapshot {
       { location_id: "sloc_eu", name: "European Warehouse", available: 1000, in_sales_channel: true },
       { location_id: "sloc_tr", name: "Türkiye Deposu", available: 0, in_sales_channel: true },
     ],
-    duplicate_gate: { active_test_order_count: 0, active_test_order_ids: [], marker: "none" },
+    duplicate_gate: {
+      active_test_order_count: 0,
+      active_test_order_ids: [],
+      active_partial_cart_count: 0,
+      active_partial_cart_ids: [],
+      marker: "none",
+    },
   }
 }
 
@@ -231,10 +237,25 @@ async function main(): Promise<void> {
   // ek) totals helper deterministik (tax_rate 0)
   ok(computeExpectedTotals(validSnapshot()).grand_total === 228, "ek totals 228")
 
-  // policy v3 doğrulaması
-  ok(CHECKOUT_TEST_ORDER_POLICY_VERSION === 3, "policy version is 3")
-  // eski v2 fingerprint artık üretilmez (yeni payload alanları)
-  ok(happy.plan_fingerprint !== "6c53ef4e763cd4b7", "old v2 fingerprint invalidated")
+  // policy v4 doğrulaması
+  ok(CHECKOUT_TEST_ORDER_POLICY_VERSION === 4, "policy version is 4")
+  // eski v2/v3 fingerprint'leri artık üretilmez (yeni payload alanları)
+  ok(
+    happy.plan_fingerprint !== "6c53ef4e763cd4b7" && happy.plan_fingerprint !== "2dcfb319e16dfbb7",
+    "old v2/v3 fingerprints invalidated"
+  )
+  // Aktif partial test cart → yeni execution bloklanır (duplicate gate v2)
+  {
+    const s = validSnapshot()
+    s.duplicate_gate.active_partial_cart_count = 1
+    s.duplicate_gate.active_partial_cart_ids = ["cart_partial_1"]
+    const p = planCheckoutTest(s)
+    ok(
+      p.decision === "CHECKOUT_TEST_ORDER_BLOCKED" &&
+        p.blockers.some((b) => b.gate === "active_partial_test_cart_exists"),
+      "duplicate gate blocks on active partial cart"
+    )
+  }
 
   // ── Money normalization (BigNumber/string/null) ───────────────────────────
   runMoneyTests()

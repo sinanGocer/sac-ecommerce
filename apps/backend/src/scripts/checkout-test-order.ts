@@ -285,23 +285,41 @@ async function inventoryLocationCandidates(
 }
 
 async function duplicateTestOrderGate(query: QueryGraph): Promise<DuplicateGateState> {
-  // Metadata order'a aktarımı garanti değil → email marker'ı ile aktif test order ara.
+  // Metadata order'a aktarımı garanti değil → email marker'ı ile aktif test
+  // ORDER ve aktif PARTIAL test CART (completed_at null, silinmemiş) aranır.
+  let activeOrders: Array<any> = []
+  let activePartialCarts: Array<any> = []
   try {
     const { data } = await query.graph({
       entity: "order",
       fields: ["id", "email", "status", "canceled_at"],
       filters: { email: TEST_EMAIL },
     })
-    const active = ((data ?? []) as Array<any>).filter(
+    activeOrders = ((data ?? []) as Array<any>).filter(
       (o) => o.canceled_at == null && o.status !== "canceled"
     )
-    return {
-      active_test_order_count: active.length,
-      active_test_order_ids: active.map((o) => o.id),
-      marker: active.length > 0 ? "email" : "none",
-    }
   } catch {
-    return { active_test_order_count: 0, active_test_order_ids: [], marker: "none" }
+    activeOrders = []
+  }
+  try {
+    const { data } = await query.graph({
+      entity: "cart",
+      fields: ["id", "email", "completed_at", "deleted_at"],
+      filters: { email: TEST_EMAIL },
+    })
+    activePartialCarts = ((data ?? []) as Array<any>).filter(
+      (c) => c.completed_at == null && c.deleted_at == null
+    )
+  } catch {
+    activePartialCarts = []
+  }
+  const marker = activeOrders.length > 0 || activePartialCarts.length > 0 ? "email" : "none"
+  return {
+    active_test_order_count: activeOrders.length,
+    active_test_order_ids: activeOrders.map((o) => o.id),
+    active_partial_cart_count: activePartialCarts.length,
+    active_partial_cart_ids: activePartialCarts.map((c) => c.id),
+    marker,
   }
 }
 

@@ -33,7 +33,12 @@ export interface CheckoutTestFingerprintPayload {
   // v2 commit execution path
   execution_strategy_version: number
   mutation_sequence: string[]
-  duplicate_order_gate: { active_test_order_count: number; marker: string }
+  duplicate_order_gate: {
+    active_test_order_count: number
+    active_partial_cart_count: number
+    gate_version: number
+    marker: string
+  }
   pre_complete_gate_version: number
   recovery_strategy_version: number
   selected_inventory_location_candidates: string[]
