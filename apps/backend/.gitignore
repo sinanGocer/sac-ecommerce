@@ -72,3 +72,9 @@ build
 
 # Partial Cart Cleanup — izole test derleme çıktısı
 /.partial-cart-test-build
+
+# Test Order Cancel — dry-run/commit raporları
+/test-order-cancel-reports
+
+# Test Order Cancel — izole test derleme çıktısı
+/.test-order-cancel-test-build
