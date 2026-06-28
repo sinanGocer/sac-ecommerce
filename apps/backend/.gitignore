@@ -51,6 +51,7 @@ build
 
 # Salon Seed Cleanup — izole test derleme çıktısı
 /.salon-seed-cleanup-test-build
+/.salon-seed-cleanup-commit-test-build
 
 # Search Projection — izole test derleme çıktısı
 /.search-projection-test-build

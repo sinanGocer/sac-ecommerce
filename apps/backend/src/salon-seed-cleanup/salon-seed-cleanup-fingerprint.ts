@@ -47,3 +47,17 @@ export function computeSalonSeedCleanupFingerprint(
   })
   return sha16(canonical)
 }
+
+/**
+ * Commit confirmation. Operatörün verdiği token (SALON_SEED_CLEANUP_FINGERPRINT)
+ * canlı state'ten YENİDEN hesaplanan plan_fingerprint ile birebir eşleşmelidir.
+ * State değişmişse (yeni cart/order vb.) fingerprint değişir → eski token reddedilir
+ * → DB write 0. Boş/eksik token da geçersizdir.
+ */
+export function isSalonSeedCommitConfirmationValid(
+  confirmToken: string | null | undefined,
+  planFingerprint: string | null
+): boolean {
+  if (!confirmToken || !planFingerprint) return false
+  return confirmToken.trim() === planFingerprint
+}

@@ -2,15 +2,19 @@ import {
   ALLOWLISTED_SEED_PRODUCTS,
   ProductReferenceCounts,
   SALON_SEED_CLEANUP_POLICY_VERSION,
+  SalonSeedCleanupDecision,
   SeedProductSnapshot,
 } from "./salon-seed-cleanup-policy"
 import { SalonSeedCleanupPlan } from "./salon-seed-cleanup-service"
+import { ExecutedSeedAction } from "./salon-seed-cleanup-writer"
 
 export interface SalonSeedCleanupReport {
   run_id: string
   started_at: string
   finished_at: string
-  mode: "dry-run"
+  mode: "dry-run" | "commit"
+  commit_enabled: boolean
+  commit_confirmed: boolean
   policy_version: number
   allowlisted_products: typeof ALLOWLISTED_SEED_PRODUCTS
   matched_product_ids: string[]
@@ -31,9 +35,11 @@ export interface SalonSeedCleanupReport {
     blockers: SalonSeedCleanupPlan["blockers"]
   }
   planned_actions: SalonSeedCleanupPlan["planned_actions"]
+  executed_actions: ExecutedSeedAction[]
   plan_fingerprint: string | null
-  db_writes: 0
-  final_decision: SalonSeedCleanupPlan["decision"]
+  db_writes: number
+  projection_writes: number
+  final_decision: SalonSeedCleanupDecision
   errors: string[]
 }
 
@@ -44,12 +50,22 @@ export function buildSalonSeedCleanupReport(params: {
   snapshots: SeedProductSnapshot[]
   countsByProductId: Record<string, ProductReferenceCounts>
   plan: SalonSeedCleanupPlan
+  /** Commit-mode opsiyonel alanları (verilmezse saf dry-run, db_writes 0). */
+  mode?: "dry-run" | "commit"
+  commitEnabled?: boolean
+  commitConfirmed?: boolean
+  executedActions?: ExecutedSeedAction[]
+  dbWrites?: number
+  projectionWrites?: number
+  finalDecision?: SalonSeedCleanupDecision
 }): SalonSeedCleanupReport {
   return {
     run_id: params.runId,
     started_at: params.startedAt,
     finished_at: params.finishedAt,
-    mode: "dry-run",
+    mode: params.mode ?? "dry-run",
+    commit_enabled: params.commitEnabled ?? false,
+    commit_confirmed: params.commitConfirmed ?? false,
     policy_version: SALON_SEED_CLEANUP_POLICY_VERSION,
     allowlisted_products: ALLOWLISTED_SEED_PRODUCTS,
     matched_product_ids: params.plan.matched_product_ids,
@@ -70,9 +86,11 @@ export function buildSalonSeedCleanupReport(params: {
       blockers: params.plan.blockers,
     },
     planned_actions: params.plan.planned_actions,
+    executed_actions: params.executedActions ?? [],
     plan_fingerprint: params.plan.plan_fingerprint,
-    db_writes: 0,
-    final_decision: params.plan.decision,
+    db_writes: params.dbWrites ?? 0,
+    projection_writes: params.projectionWrites ?? 0,
+    final_decision: params.finalDecision ?? params.plan.decision,
     errors: params.plan.errors,
   }
 }
