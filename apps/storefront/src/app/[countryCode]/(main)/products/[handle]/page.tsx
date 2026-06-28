@@ -4,6 +4,13 @@ import { listProducts } from "@lib/data/products"
 import { getRegion, listRegions } from "@lib/data/regions"
 import ProductTemplate from "@modules/products/templates"
 import { HttpTypes } from "@medusajs/types"
+import { getBaseURL } from "@lib/util/env"
+import {
+  buildProductCanonicalUrl,
+  buildProductImageUrl,
+  buildProductJsonLd,
+  buildProductSeoDescription,
+} from "@lib/util/product-seo"
 
 type Props = {
   params: Promise<{ countryCode: string; handle: string }>
@@ -72,6 +79,7 @@ function getImagesForVariant(
 export async function generateMetadata(props: Props): Promise<Metadata> {
   const params = await props.params
   const { handle } = params
+  const baseUrl = getBaseURL()
   const region = await getRegion(params.countryCode)
 
   if (!region) {
@@ -87,13 +95,34 @@ export async function generateMetadata(props: Props): Promise<Metadata> {
     notFound()
   }
 
+  const title = `${product.title} | Sinan Koçer Hair Store`
+  const description = buildProductSeoDescription(product)
+  const canonical = buildProductCanonicalUrl({
+    baseUrl,
+    countryCode: params.countryCode,
+    handle,
+  })
+  const image = buildProductImageUrl({ baseUrl, product })
+
   return {
-    title: `${product.title} | Sinan Koçer Hair Store`,
-    description: `${product.title}`,
+    title,
+    description,
+    alternates: {
+      canonical,
+    },
     openGraph: {
-      title: `${product.title} | Sinan Koçer Hair Store`,
-      description: `${product.title}`,
-      images: product.thumbnail ? [product.thumbnail] : [],
+      title,
+      description,
+      url: canonical,
+      type: "website",
+      images: image
+        ? [
+            {
+              url: image,
+              alt: product.title,
+            },
+          ]
+        : [],
     },
   }
 }
@@ -119,13 +148,24 @@ export default async function ProductPage(props: Props) {
   }
 
   const images = getImagesForVariant(pricedProduct, selectedVariantId)
+  const jsonLd = buildProductJsonLd({
+    baseUrl: getBaseURL(),
+    countryCode: params.countryCode,
+    product: pricedProduct,
+  })
 
   return (
-    <ProductTemplate
-      product={pricedProduct}
-      region={region}
-      countryCode={params.countryCode}
-      images={images ?? []}
-    />
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+      <ProductTemplate
+        product={pricedProduct}
+        region={region}
+        countryCode={params.countryCode}
+        images={images ?? []}
+      />
+    </>
   )
 }

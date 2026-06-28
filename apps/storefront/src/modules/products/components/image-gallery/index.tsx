@@ -32,7 +32,7 @@ const ImageGallery = ({
                 images={index === 0 ? images : [image]}
                 priority={index <= 2}
                 className="absolute inset-0 rounded-rounded object-cover"
-                alt={`${productTitle} görseli ${index + 1}`}
+                alt={productTitle}
                 sizes="(max-width: 576px) 280px, (max-width: 768px) 360px, (max-width: 992px) 480px, 800px"
               />
             </Container>

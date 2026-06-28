@@ -57,7 +57,7 @@ export default async function ProductPreview({
             size="full"
             isFeatured={isFeatured}
             priority={priority}
-            alt={`${product.title} görseli`}
+            alt={product.title}
             className="!rounded-none !bg-transparent !p-0 !shadow-none transition-transform duration-500 group-hover:scale-105"
           />
         </div>
