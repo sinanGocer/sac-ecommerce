@@ -46,6 +46,12 @@ build
 # Catalog Product Quarantine — izole test derleme çıktısı
 /.catalog-quarantine-test-build
 
+# Salon Seed Cleanup — dry-run raporları
+/salon-seed-cleanup-reports
+
+# Salon Seed Cleanup — izole test derleme çıktısı
+/.salon-seed-cleanup-test-build
+
 # Search Projection — izole test derleme çıktısı
 /.search-projection-test-build
 
