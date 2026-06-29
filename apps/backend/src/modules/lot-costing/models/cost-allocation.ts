@@ -14,6 +14,10 @@ const CostAllocation = model.define("cost_allocation", {
   total_cost: model.bigNumber(),
   // sale | reversal
   allocation_type: model.text().default("sale"),
+  // Bir SALE allocation'ından şimdiye kadar geri alınan (reverse edilen) miktar.
+  // Kısmi iadelerde güvenli takip: newly_reversed = min(want, allocated - reversed).
+  // received_quantity üstüne çıkmayı ve duplicate reversal'ı DB seviyesinde önler.
+  reversed_quantity: model.number().default(0),
   idempotency_key: model.text().unique(),
   allocated_at: model.dateTime(),
   reversed_at: model.dateTime().nullable(),

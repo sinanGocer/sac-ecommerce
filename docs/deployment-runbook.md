@@ -96,6 +96,64 @@ git add .github/workflows/ci.yml && git commit -m "ci: enable workflow" && git p
 - Görsel barındırma (S3/CDN) host bilgisi (opsiyonel).
 - Hosting platformu seçimi (container platform / VM / PaaS).
 
+## 8. Lot Costing — FIFO concurrency & entegrasyon testi
+
+### 8.1 İzole test DB kurulumu
+```bash
+createdb medusa_sac_ecommerce_test          # adı MUTLAKA "_test" içermeli
+cp apps/backend/.env.test.example apps/backend/.env.test   # .env.test COMMIT EDİLMEZ
+```
+Fail-closed guard'lar (`src/inventory-costing/__integration__/test-db.ts`): DB adında
+`_test` yoksa / `NODE_ENV != test` ise / bilinen dev-prod DB adı algılanırsa testler
+**başlamaz**. Secret'lar loglanmaz (URL maskelenir). Gerçek dev/prod DB'ye yazım imkânsız.
+
+### 8.2 Entegrasyon testlerini çalıştırma
+```bash
+cd apps/backend
+npm run inventory:costing:test          # saf birim testleri (DB'siz)
+npm run inventory:costing:integration   # GERÇEK PostgreSQL (izole _test DB)
+npm run rbac:test                       # yetki/redaksiyon
+```
+`integration` çıktısı: kullanılan test DB adı, uygulanan migration'lar, geçen/başarısız
+sayısı ve concurrency senaryo sonucu (oversell=false) gösterir.
+
+### 8.3 FIFO lock yöntemi
+- Tüketim/reversal `LotCostingService.consumeFifoForItem` / `reverseFifoForOrder` ile
+  **MikroORM transaction** içinde yapılır (`@InjectManager`).
+- Tüketilecek lotlar `received_at ASC` sırasıyla **PESSIMISTIC_WRITE** (`SELECT … FOR
+  UPDATE`) ile kilitlenir → eşzamanlı siparişler **serialize** olur.
+- Kalan miktar transaction içindeki kilitli satırdan okunur; stok yetersizse hiçbir
+  yazım yapılmadan **rollback** (oversell fail-closed).
+- DB seviyesi son savunma: `cost_allocation.idempotency_key` UNIQUE index (duplicate
+  allocation) + `inventory_cost_lot` CHECK `remaining>=0` ve `remaining<=received`.
+- **Raw SQL yok, process-mutex yok, kilitsiz check-then-update yok.**
+
+### 8.4 Deadlock / retry politikası
+- Lotlar her zaman aynı sırada (`received_at ASC, id ASC`) kilitlenir → aynı varyantta
+  deadlock beklenmez.
+- Yine de `40001` (serialization_failure) / `40P01` (deadlock_detected) hatalarında
+  **sınırlı (3) + loglanan** retry yapılır (kısa jitter backoff). Sessiz sonsuz döngü yok.
+
+### 8.5 Feature flag açma sırası (production)
+1. `LOT_COSTING_WRITE_ENABLED=true` → owner'dan stok girişi; **tüm mevcut stoğu lotlara
+   bağla** (her satılan varyantın değerlenmiş lotu olmalı).
+2. Doğrula: `UNVALUED_OPENING_STOCK` raporunda **0** kalmalı. **>0 ise FIFO'yu AÇMA** —
+   subscriber aktivasyon guard'ı o varyantta FIFO'yu başlatmaz (güvenli no-op + operatör
+   uyarısı, satış siparişi bozulmaz).
+3. `LOT_COSTING_FIFO_ENABLED=true` → sipariş→allocation + iptal→reversal subscriber'ları.
+4. `LOT_COSTING_JOBS_ENABLED=true` → forecast/reorder/accuracy (öneri-only).
+
+> Migration: `reversed_quantity` kolonu + lot CHECK constraint'leri
+> (`Migration20260629160000`) production deploy'da normal migration adımıyla uygulanır
+> (`§3`). Bu fazda yalnız **izole test DB**'ye uygulandı; dev/prod'a dokunulmadı.
+
+### 8.6 Sorun halinde rollback
+- FIFO'da anormallik → `LOT_COSTING_FIFO_ENABLED=false` (subscriber anında no-op olur;
+  yarım allocation kalmaz, her tüketim zaten atomiktir).
+- Stok girişinde sorun → `LOT_COSTING_WRITE_ENABLED=false`.
+- Allocation/lot kayıtları **silinmez**; iptal/iade reversal ile geri alınır (immutable
+  audit korunur). Gerekirse `§4` genel rollback prosedürü.
+
 ## Kapsam dışı (kalan gerçek blocker'lar)
 - **Ödeme (iyzico):** gerçek merchant + network transport (skeleton kapalı).
 - **Gerçek e-posta:** notification provider + recipient resolution (şu an simüle).

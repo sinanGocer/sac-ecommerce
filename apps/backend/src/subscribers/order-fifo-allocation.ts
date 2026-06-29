@@ -27,7 +27,7 @@ export default async function orderFifoAllocationHandler({
 
   const result = await applyFifoForOrder(service as never, query, data.id, logger)
   logger.info(
-    `[lot-costing] FIFO applied order=${data.id} items=${result.applied_items} allocations=${result.written_allocations} skipped=${result.skipped_idempotent} shortfalls=${result.shortfalls}`
+    `[lot-costing] FIFO applied order=${data.id} items=${result.applied_items} allocations=${result.written_allocations} skipped=${result.skipped_idempotent} shortfalls=${result.shortfalls} blocked_unvalued=${result.blocked_unvalued}`
   )
 }
 

@@ -22,7 +22,7 @@ export default async function orderFifoReversalHandler({
 
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const service = container.resolve<LotCostingService>(LOT_COSTING_MODULE)
-  const result = await reverseFifoForOrder(service as never, data.id)
+  const result = await reverseFifoForOrder(service as never, data.id, logger)
   logger.info(
     `[lot-costing] FIFO reversal order=${data.id} reversed_items=${result.reversed_items} restored=${result.restored_quantity} skipped=${result.skipped_already_reversed}`
   )
