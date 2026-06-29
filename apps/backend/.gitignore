@@ -56,6 +56,13 @@ build
 # Env validation — izole test derleme çıktısı
 /.env-validate-test-build
 
+# Competitive Pricing — dry-run raporları + izole test derleme çıktısı
+/pricing-intelligence-reports
+/.pricing-intelligence-test-build
+
+# Cimri Feed — izole test derleme çıktısı
+/.cimri-feed-test-build
+
 # Search Projection — izole test derleme çıktısı
 /.search-projection-test-build
 
