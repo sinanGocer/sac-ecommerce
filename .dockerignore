@@ -1,0 +1,42 @@
+# Docker build context = repo root. Görüntüye girmemesi gerekenler.
+**/node_modules
+**/.next
+**/.medusa
+**/.turbo
+**/dist
+**/build
+**/coverage
+
+# Test build çıktıları (backend isolated runner'lar)
+**/.catalog-test-build
+**/.catalog-quarantine-test-build
+**/.salon-seed-cleanup-test-build
+**/.salon-seed-cleanup-commit-test-build
+**/.env-validate-test-build
+**/.search-projection-test-build
+**/.cart-cleanup-test-build
+**/.partial-cart-test-build
+**/.shipping-setup-test-build
+**/.checkout-test-build
+**/.iyzico-payment-build
+**/.test-order-cancel-test-build
+
+# Local env / secret'lar — image'a ASLA girmemeli
+**/.env
+**/.env.local
+**/.env.*.local
+**/.env.production
+**/.env.development
+
+# Raporlar (cleanup/dry-run çıktıları)
+**/*-reports
+**/salon-seed-cleanup-reports
+**/catalog-cleanup-reports
+
+# VCS / IDE / OS
+.git
+.github
+**/.vscode
+**/.DS_Store
+*.log
+.vercel

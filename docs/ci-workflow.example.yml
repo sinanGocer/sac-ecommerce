@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Gerçek deploy YOK; yalnız doğrulama (install + test + build + docker build).
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Clean install
+        run: npm ci
+
+      - name: Backend isolated tests (no DB)
+        working-directory: apps/backend
+        run: |
+          npm run env:validate:test
+          npm run salon-seed:cleanup:test
+          npm run salon-seed:cleanup:commit:test
+          npm run search:projection:test
+          npm run shipping:tr:setup:test
+          npm run cart:cleanup:test
+          npm run partial-cart:cleanup:test
+          npm run catalog:test
+          npm run catalog:quarantine:test
+          npm run checkout:test-order:test
+          npm run test-order:cancel:test
+          npm run payment:iyzico:test
+
+      - name: Backend build
+        working-directory: apps/backend
+        run: npm run build
+
+      - name: Storefront production env validation + build
+        working-directory: apps/storefront
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY: pk_ci_dummy
+          NEXT_PUBLIC_MEDUSA_BACKEND_URL: https://api.example.com
+          NEXT_PUBLIC_BASE_URL: https://shop.example.com
+          NEXT_PUBLIC_DEFAULT_REGION: tr
+        run: npm run build
+
+      - name: git diff --check
+        run: git --no-pager diff --check HEAD
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -f apps/backend/Dockerfile -t sac-backend:ci .
+
+      - name: Build storefront image
+        run: |
+          docker build -f apps/storefront/Dockerfile \
+            --build-arg NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY=pk_ci_dummy \
+            --build-arg NEXT_PUBLIC_MEDUSA_BACKEND_URL=https://api.example.com \
+            --build-arg NEXT_PUBLIC_BASE_URL=https://shop.example.com \
+            -t sac-storefront:ci .
