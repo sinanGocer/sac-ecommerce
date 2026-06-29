@@ -1,0 +1,24 @@
+# Aveda kullanıcı-destekli import — ÖRNEK giriş dosyası (.txt)
+#
+# Bu dosya BİÇİM örneğidir; aşağıdaki ID/slug'lar GERÇEK ürün değildir.
+# Gerçek import için: tarayıcıda resmi Aveda Türkiye sitesinden ürün
+# sayfalarını açın ve canonical ürün URL'lerini (adres çubuğundaki tam URL)
+# satır başına bir tane olacak şekilde buraya yapıştırın.
+#
+# Kurallar (doğrulayıcı tarafından uygulanır):
+#  - Yalnız aveda.com.tr (ve alt alan adları)
+#  - Yalnız gerçek ürün sayfaları:
+#      /product/{id}/{id}/{kategori}/{altkategori}/{slug}
+#  - legal / kvkk / kampanya / kategori-listeleme / sepet sayfaları REDDEDİLİR
+#  - # ile başlayan satırlar ve boş satırlar atlanır
+#
+# Alternatif girişler:
+#  - .csv:  url,title,price,sku,ean   (npm run catalog:assisted-import:dry için IMPORT_INPUT_FILE=...csv)
+#  - .html: tek bir kaydedilmiş ürün sayfası (IMPORT_INPUT_FILE=...html)
+#
+# Çalıştırma (dry-run, DB yazımı YOK):
+#  IMPORT_INPUT_FILE=import-input/aveda-product-urls.example.txt npm run catalog:assisted-import:dry
+
+https://www.aveda.com.tr/product/100001/100001/sac-bakim/sampuan/ornek-onarici-sampuan-200-ml
+https://www.aveda.com.tr/product/100002/100002/sac-sekillendirme/sprey/ornek-isi-koruyucu-sprey-150-ml
+https://www.aveda.com.tr/product/100003/100003/sac-derisi/tonik/ornek-sac-derisi-tonigi-100-ml

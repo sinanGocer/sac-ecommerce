@@ -63,6 +63,15 @@ build
 # Cimri Feed — izole test derleme çıktısı
 /.cimri-feed-test-build
 
+# User-Assisted Import — raporlar + izole test derleme çıktısı
+/assisted-import-reports
+/.assisted-import-test-build
+
+# User-Assisted Import — kullanıcının gerçek giriş dosyaları (örnek hariç)
+/import-input/*
+!/import-input/*.example.txt
+!/import-input/*.example.csv
+
 # Search Projection — izole test derleme çıktısı
 /.search-projection-test-build
 
