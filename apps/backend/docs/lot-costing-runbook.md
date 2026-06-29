@@ -63,3 +63,57 @@ Test: `npm run inventory:costing:test` (44 assertion).
 
 Hesaplama motoru hazır olduğundan bu katmanlar motoru çağıran ince IO sarmalları
 olacaktır.
+
+## GÜNCEL DURUM — Operasyonel (atomik workflow)
+
+Migration local DB'de uygulandı; veri modeli + hesaplama motoru + Admin
+ekranları + read/write API'ları + FIFO subscriber'ları + job'lar mevcut.
+Stok girişi artık **atomik workflow** ile yapılır (`src/workflows/lot-costing/
+create-stock-entry.ts`): receipt → lot → inventory artışı → audit, her adım
+**compensation'lı**; herhangi bir adım hata verirse önceki adımlar geri alınır
+(soft-state; hard delete yok). Idempotency_key zaten varsa yeni kayıt/stok
+artışı yok. `POST /admin/lot-costing/stock-entry` bu workflow'u çağırır.
+
+### Feature flag açma sırası (production)
+1. **Açılış maliyet lotları:** `GET /admin/lot-costing/opening-stock` ile
+   maliyetsiz (UNVALUED) varyantları listele; her stoklu varyant için
+   `LOT_COSTING_WRITE_ENABLED=true` ile gerçek stok girişi yap.
+2. **Doğrula:** opening-stock raporu boşalmalı (maliyetsiz varyant kalmamalı).
+3. **FIFO'yu aç:** `LOT_COSTING_FIFO_ENABLED=true`. **Maliyetsiz stok varken
+   FIFO açma** (allocation maliyetsiz lota düşer / oversell fail-closed olur).
+4. **Job'ları aç:** `LOT_COSTING_JOBS_ENABLED=true` (öneri-only; PO/fiyat/stok
+   mutation yok).
+
+### İlk gerçek stok girişinden önce kontrol listesi
+- [ ] `LOT_COSTING_WRITE_ENABLED=true` yalnız gerekli ortamda.
+- [ ] variant + location_id + inventory_item_id doğru.
+- [ ] idempotency_key benzersiz (tekrar = no-op).
+- [ ] owner/admin ile çağrılıyor (catalog_editor → 403).
+
+### Rollback / compensation davranışı
+- Lot oluşturma başarısız → receipt geri alınır.
+- Inventory artışı başarısız → lot + receipt geri alınır.
+- Audit yalnız başarılı commit sonrası üretilir (başarısızlıkta audit yok).
+
+### Sorun halinde flag kapatma (kill-switch)
+İlgili `LOT_COSTING_*` flag'ini `false` yap + servisi yeniden başlat →
+stock-entry 503, FIFO subscriber no-op, job no-op. Mevcut yazılmış lot/allocation
+KORUNUR (silinmez); yalnız yeni işlemler durur.
+
+## KALAN PRODUCTION-GRADE AÇIKLAR (dürüst)
+1. **FIFO eşzamanlılık (concurrency) garantisi:** mevcut FIFO apply idempotent +
+   oversell plan-seviyesinde fail-closed; ANCAK iki eşzamanlı siparişin AYNI lotu
+   fazla tüketmesini kesin engellemek için lot `remaining_quantity` güncellemesi
+   **satır kilidiyle** yapılmalı. Kural gereği raw SQL ve process-mutex yasak;
+   doğru çözüm: MikroORM **pessimistic write lock** (`lockMode`, raw SQL DEĞİL) ya
+   da Medusa **inventory reservation** sistemini otoriter oversell guard'ı olarak
+   kullanmak. Bu, model/servis seviyesinde ek bir uygulama adımıdır (henüz YOK).
+2. **Canlı integration test DB:** `jest.config.js` `integration-tests/setup.js`
+   bekliyor (mevcut değil) ve `.env.test` yok; bu ortamda izole test DB runner'ı
+   kurulmadı/çalıştırılmadı. Atomik rollback + concurrency davranışı bu yüzden
+   **canlı integration testleriyle doğrulanmadı** (saf yazma mantığı 65 unit
+   assertion ile test edildi). CI/uygun ortamda `medusaIntegrationTestRunner` ile
+   stok-giriş rollback + FIFO concurrency testleri eklenmelidir.
+
+Bu iki madde tamamlanana kadar sistem **PRODUCTION_READY sayılmaz**; flag'ler
+kapalı kaldığı sürece mevcut veriye dokunmaz.

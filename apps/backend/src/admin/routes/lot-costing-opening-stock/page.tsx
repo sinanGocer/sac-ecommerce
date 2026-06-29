@@ -1,5 +1,5 @@
 import { defineRouteConfig } from "@medusajs/admin-sdk"
-import { Container, Heading, Text } from "@medusajs/ui"
+import { Badge, Button, Container, Heading, Text } from "@medusajs/ui"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 
@@ -26,24 +26,54 @@ const OpeningStockPage = () => {
   }, [])
 
   return (
-    <Container className="p-0">
-      <div className="px-6 py-4">
-        <Heading level="h1">{t("lotCosting.openingStock", "Açılış Stoğu (Maliyet Eksik)")}</Heading>
-        <Text size="small" className="text-ui-fg-subtle">{t("lotCosting.openingNote", "Maliyet lotu olmayan varyantlar. Owner maliyet girmeli; aksi halde gerçek kâr/fiyat uygulaması bloke.")}</Text>
+    <Container className="overflow-hidden p-0">
+      <div className="border-ui-border-base bg-ui-bg-subtle flex flex-col gap-3 border-b px-6 py-4 md:flex-row md:items-start md:justify-between">
+        <div className="flex flex-col gap-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Heading level="h1">{t("lotCosting.openingStock", "Açılış Stoğu")}</Heading>
+            <Badge size="2xsmall" color={items.length > 0 ? "orange" : "green"}>
+              {items.length > 0 ? t("lotCosting.needsCost", "Maliyet bekliyor") : t("common.ok", "Tamam")}
+            </Badge>
+          </div>
+          <Text size="small" className="text-ui-fg-subtle max-w-[760px]">
+            {t("lotCosting.openingNote", "Maliyet lotu olmayan varyantlar. Owner maliyet girmeli; aksi halde gerçek kâr/fiyat uygulaması bloke.")}
+          </Text>
+        </div>
+        <div className="border-ui-border-base bg-ui-bg-base rounded-md border px-3 py-2 md:min-w-[180px]">
+          <Text size="xsmall" className="text-ui-fg-subtle">{t("lotCosting.pendingVariants", "Bekleyen varyant")}</Text>
+          <Text size="large" weight="plus">{items.length}</Text>
+        </div>
       </div>
-      <div className="px-6 pb-6">
+      <div className="px-6 py-5">
         {forbidden ? (
-          <Text size="small" className="text-ui-fg-error">{t("lotCosting.forbidden", "Yetki yok (yalnız owner/admin).")}</Text>
+          <div className="border-ui-border-base rounded-md border p-6 text-center">
+            <Text size="small" weight="plus" className="text-ui-fg-error">{t("lotCosting.forbidden", "Yetki yok (yalnız owner/admin).")}</Text>
+          </div>
         ) : loading ? (
-          <Text size="small">{t("common.loading", "Yükleniyor…")}</Text>
+          <div className="border-ui-border-base rounded-md border p-6 text-center">
+            <Text size="small">{t("common.loading", "Yükleniyor…")}</Text>
+          </div>
         ) : items.length === 0 ? (
-          <Text size="small" className="text-ui-fg-subtle">{t("lotCosting.allValued", "Tüm varyantların maliyet lotu var.")}</Text>
+          <div className="border-ui-border-base rounded-md border px-4 py-10 text-center">
+            <Text size="small" weight="plus">{t("lotCosting.allValuedTitle", "Her şey temiz")}</Text>
+            <Text size="small" className="text-ui-fg-subtle">{t("lotCosting.allValued", "Tüm varyantların maliyet lotu var.")}</Text>
+          </div>
         ) : (
-          <div className="flex flex-col gap-y-1">
+          <div className="border-ui-border-base rounded-md border">
+            <div className="border-ui-border-base bg-ui-bg-subtle hidden grid-cols-[minmax(0,1fr)_180px] gap-3 border-b px-4 py-3 sm:grid">
+              <Text size="xsmall" weight="plus" className="text-ui-fg-subtle">{t("common.product", "Ürün")}</Text>
+              <Text size="xsmall" weight="plus" className="text-ui-fg-subtle">{t("lotCosting.stock", "Stok")}</Text>
+            </div>
             {items.map((it) => (
-              <div key={it.variant_id} className="border-ui-border-base flex items-center justify-between border-b py-1 text-sm">
-                <span>{it.title} — {it.variant_title ?? it.variant_id}</span>
-                <span className="text-ui-fg-subtle">{t("lotCosting.stock", "Stok")}: {it.current_stock}</span>
+              <div key={it.variant_id} className="border-ui-border-base grid gap-3 border-b px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_180px]">
+                <div className="min-w-0">
+                  <Text size="small" weight="plus">{it.title}</Text>
+                  <Text size="xsmall" className="text-ui-fg-subtle">{it.variant_title ?? it.variant_id}</Text>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 sm:justify-between">
+                  <Text size="small" className="text-ui-fg-subtle">{it.current_stock}</Text>
+                  <Button size="small" variant="secondary" disabled>{t("lotCosting.addCost", "Maliyet gir")}</Button>
+                </div>
               </div>
             ))}
           </div>

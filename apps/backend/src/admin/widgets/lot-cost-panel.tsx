@@ -27,6 +27,7 @@ type Summary = {
 type Variant = { id: string; title?: string }
 
 const num = (v: string) => (v.trim() === "" ? 0 : Number(v))
+const money = (v?: number | null) => (v == null ? "—" : `₺${v}`)
 
 const LotCostPanel = ({ data }: { data: { id: string; variants?: Variant[] } }) => {
   const { t } = useTranslation()
@@ -87,55 +88,99 @@ const LotCostPanel = ({ data }: { data: { id: string; variants?: Variant[] } }) 
 
   const rec = summary?.price_recommendation
   return (
-    <Container className="p-0">
-      <div className="flex items-center justify-between px-6 py-4">
-        <Heading level="h2">{t("lotCosting.title", "Stok ve Maliyet Partileri")}</Heading>
+    <Container className="overflow-hidden p-0">
+      <div className="border-ui-border-base bg-ui-bg-subtle flex flex-col gap-3 border-b px-6 py-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Heading level="h2">{t("lotCosting.title", "Stok ve Maliyet Partileri")}</Heading>
+            {summary?.unvalued_opening_stock ? <Badge size="2xsmall" color="orange">{t("lotCosting.unvalued", "Maliyet Eksik")}</Badge> : null}
+          </div>
+          <Text size="small" className="text-ui-fg-subtle">
+            {t("lotCosting.panelHint", "Parti bazlı stok, maliyet ve fiyat önerisini tek ekranda izleyin.")}
+          </Text>
+        </div>
         {variants.length > 1 ? (
-          <select className="bg-ui-bg-field border-ui-border-base rounded-md border px-2 py-1 text-sm" value={variantId} onChange={(e) => setVariantId(e.target.value)}>
+          <select className="bg-ui-bg-field border-ui-border-base rounded-md border px-3 py-2 text-sm" value={variantId} onChange={(e) => setVariantId(e.target.value)}>
             {variants.map((v) => (<option key={v.id} value={v.id}>{v.title ?? v.id}</option>))}
           </select>
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-y-4 px-6 pb-6">
+      <div className="flex flex-col gap-y-4 px-6 py-5">
         {loading ? (
-          <Text size="small" className="text-ui-fg-subtle">{t("common.loading", "Yükleniyor…")}</Text>
+          <div className="border-ui-border-base bg-ui-bg-base rounded-md border p-6 text-center">
+            <Text size="small" className="text-ui-fg-subtle">{t("common.loading", "Yükleniyor…")}</Text>
+          </div>
         ) : (
           <>
-            {/* Lot tablosu */}
-            <div>
-              <Text weight="plus" size="small" className="mb-2">{t("lotCosting.lotsSection", "Partiler")}</Text>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="border-ui-border-base rounded-md border p-3">
+                <Text size="xsmall" className="text-ui-fg-subtle">{t("lotCosting.totalStock", "Toplam stok")}</Text>
+                <Text size="large" weight="plus">{summary?.total_remaining_quantity ?? 0}</Text>
+              </div>
+              <div className="border-ui-border-base rounded-md border p-3">
+                <Text size="xsmall" className="text-ui-fg-subtle">{t("lotCosting.lotCount", "Aktif parti")}</Text>
+                <Text size="large" weight="plus">{summary?.lot_count ?? 0}</Text>
+              </div>
+              <div className="border-ui-border-base rounded-md border p-3">
+                <Text size="xsmall" className="text-ui-fg-subtle">{t("lotCosting.recommended", "Tavsiye")}</Text>
+                <Text size="large" weight="plus">{money(rec?.default_recommended_price)}</Text>
+              </div>
+            </div>
+
+            <div className="border-ui-border-base rounded-md border">
+              <div className="border-ui-border-base flex items-center justify-between border-b px-4 py-3">
+                <Text weight="plus" size="small">{t("lotCosting.lotsSection", "Partiler")}</Text>
+                <Badge size="2xsmall" color="grey">{(summary?.lots ?? []).length}</Badge>
+              </div>
               {(summary?.lots ?? []).length === 0 ? (
-                <Text size="small" className="text-ui-fg-subtle">{t("lotCosting.empty", "Henüz maliyet partisi yok. Yeni Stok Girişi ile ekleyin.")}</Text>
+                <div className="px-4 py-8 text-center">
+                  <Text size="small" weight="plus">{t("lotCosting.emptyTitle", "Henüz parti yok")}</Text>
+                  <Text size="small" className="text-ui-fg-subtle">{t("lotCosting.empty", "Henüz maliyet partisi yok. Yeni Stok Girişi ile ekleyin.")}</Text>
+                </div>
               ) : (
-                <div className="flex flex-col gap-y-1">
+                <div className="divide-ui-border-base divide-y">
                   {(summary?.lots ?? []).map((l) => (
-                    <div key={l.lot_id} className="border-ui-border-base flex items-center justify-between border-b py-1 text-sm">
-                      <span>{l.lot_number ?? l.lot_id.slice(0, 10)} · {new Date(l.received_at).toLocaleDateString("tr-TR")}</span>
-                      <span className="flex items-center gap-x-2">
+                    <div key={l.lot_id} className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                      <div className="min-w-0">
+                        <Text size="small" weight="plus">{l.lot_number ?? l.lot_id.slice(0, 10)}</Text>
+                        <Text size="xsmall" className="text-ui-fg-subtle">
+                          {new Date(l.received_at).toLocaleDateString("tr-TR")}
+                          {l.supplier_name ? ` · ${l.supplier_name}` : ""}
+                        </Text>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 md:justify-end">
                         <Badge size="2xsmall">{t("lotCosting.stock", "Stok")}: {l.remaining_quantity}</Badge>
-                        {l.effective_unit_cost != null ? <Badge size="2xsmall" color="green">₺{l.effective_unit_cost}</Badge> : null}
+                        {l.effective_unit_cost != null ? <Badge size="2xsmall" color="green">{money(l.effective_unit_cost)}</Badge> : null}
                         <Badge size="2xsmall" color={l.status === "active" ? "blue" : "grey"}>{l.status}</Badge>
-                      </span>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Maliyet ve fiyat (owner) */}
             {isOwner ? (
-              <div className="bg-ui-bg-subtle rounded-md p-3">
-                <Text weight="plus" size="small" className="mb-2">{t("lotCosting.costPricing", "Maliyet ve Fiyatlandırma")}</Text>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <span>FIFO: ₺{summary?.cost?.fifo ?? "—"}</span>
-                  <span>{t("lotCosting.wac", "Ağırlıklı")}: ₺{summary?.cost?.weighted_average_cost ?? "—"}</span>
-                  <span>{t("lotCosting.last", "Son alış")}: ₺{summary?.cost?.last_purchase_cost ?? "—"}</span>
-                  <span>{t("lotCosting.minSafe", "Min güvenli")}: ₺{rec?.minimum_safe_price ?? "—"}</span>
-                  <span>{t("lotCosting.recommended", "Tavsiye")}: ₺{rec?.default_recommended_price ?? "—"}</span>
-                  <span>{t("lotCosting.stockValue", "Stok değeri")}: ₺{summary?.stock_value ?? "—"}</span>
+              <div className="border-ui-border-base bg-ui-bg-subtle rounded-md border p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <Text weight="plus" size="small">{t("lotCosting.costPricing", "Maliyet ve Fiyatlandırma")}</Text>
+                  {rec?.loss_risk ? <Badge size="2xsmall" color="red">{t("lotCosting.lossRisk", "Zarar Riski")}</Badge> : null}
                 </div>
-                {rec?.loss_risk ? <Badge size="2xsmall" color="red">{t("lotCosting.lossRisk", "Zarar Riski")}</Badge> : null}
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {[
+                    ["FIFO", money(summary?.cost?.fifo)],
+                    [t("lotCosting.wac", "Ağırlıklı"), money(summary?.cost?.weighted_average_cost)],
+                    [t("lotCosting.last", "Son alış"), money(summary?.cost?.last_purchase_cost)],
+                    [t("lotCosting.minSafe", "Min güvenli"), money(rec?.minimum_safe_price)],
+                    [t("lotCosting.recommended", "Tavsiye"), money(rec?.default_recommended_price)],
+                    [t("lotCosting.stockValue", "Stok değeri"), money(summary?.stock_value)],
+                  ].map(([label, value]) => (
+                    <div key={label} className="bg-ui-bg-base border-ui-border-base rounded-md border p-3">
+                      <Text size="xsmall" className="text-ui-fg-subtle">{label}</Text>
+                      <Text size="small" weight="plus">{value}</Text>
+                    </div>
+                  ))}
+                </div>
                 {rec?.default_recommended_price != null ? (
                   <div className="mt-3">
                     {confirmPrice === null ? (
@@ -143,7 +188,7 @@ const LotCostPanel = ({ data }: { data: { id: string; variants?: Variant[] } }) 
                         {t("lotCosting.applyPrice", "Satış Fiyatına Uygula")}
                       </Button>
                     ) : (
-                      <div className="border-ui-border-base rounded-md border p-3">
+                      <div className="bg-ui-bg-base border-ui-border-base rounded-md border p-3">
                         <Text size="small">{t("lotCosting.confirmApply", "Yeni satış fiyatı")}: ₺{confirmPrice}</Text>
                         <Text size="xsmall" className="text-ui-fg-subtle">{t("lotCosting.applyNote", "Bu sürümde gerçek fiyat değiştirilmez (önizleme/onay).")}</Text>
                         <div className="mt-2 flex gap-x-2">
@@ -159,11 +204,13 @@ const LotCostPanel = ({ data }: { data: { id: string; variants?: Variant[] } }) 
               <Badge size="2xsmall" color="grey">{t("lotCosting.costHidden", "Maliyet gizli")}</Badge>
             )}
 
-            {/* Yeni stok girişi (owner) */}
             {isOwner ? (
-              <div className="border-ui-border-base rounded-md border p-3">
-                <Text weight="plus" size="small" className="mb-2">{t("lotCosting.newEntry", "Yeni Stok Girişi")}</Text>
-                <div className="grid grid-cols-2 gap-2">
+              <div className="border-ui-border-base rounded-md border p-4">
+                <div className="mb-3">
+                  <Text weight="plus" size="small">{t("lotCosting.newEntry", "Yeni Stok Girişi")}</Text>
+                  <Text size="xsmall" className="text-ui-fg-subtle">{t("lotCosting.newEntryHint", "Fatura, tedarikçi ve depo bilgisiyle izlenebilir parti oluşturun.")}</Text>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {([
                     ["received_quantity", "Miktar"],
                     ["unit_purchase_cost", "Birim Alış (₺)"],
@@ -175,18 +222,16 @@ const LotCostPanel = ({ data }: { data: { id: string; variants?: Variant[] } }) 
                   ] as const).map(([k, label]) => (
                     <div key={k}>
                       <Label size="xsmall">{label}</Label>
-                      <Input size="small" value={(form as never)[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />
+                      <Input size="small" value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />
                     </div>
                   ))}
                 </div>
-                <div className="mt-3 flex items-center gap-x-3">
+                <div className="mt-4 flex flex-wrap items-center gap-3">
                   <Button size="small" variant="primary" onClick={submitEntry}>{t("lotCosting.saveEntry", "Stok Girişi Kaydet")}</Button>
                   {msg ? <Text size="xsmall" className="text-ui-fg-subtle">{msg}</Text> : null}
                 </div>
               </div>
             ) : null}
-
-            {summary?.unvalued_opening_stock ? <Badge size="2xsmall" color="orange">{t("lotCosting.unvalued", "Maliyet Eksik")}</Badge> : null}
           </>
         )}
       </div>

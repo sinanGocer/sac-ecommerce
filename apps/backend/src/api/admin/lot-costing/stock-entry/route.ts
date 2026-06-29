@@ -1,24 +1,21 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
-import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
-import { updateInventoryLevelsWorkflow } from "@medusajs/medusa/core-flows"
 
-import { LOT_COSTING_MODULE } from "../../../../modules/lot-costing"
-import type LotCostingService from "../../../../modules/lot-costing/service"
-import { buildAuditEntry } from "../../../../inventory-costing/audit"
 import { viewerRoleFromKeys } from "../../../../inventory-costing/redaction"
 import { planStockEntry, StockEntryFull } from "../../../../inventory-costing/write-ops"
 import { resolveRoleKeys } from "../../../../rbac/catalog-editor"
+import { createStockEntryWorkflow } from "../../../../workflows/lot-costing/create-stock-entry"
 
 /**
- * POST /admin/lot-costing/stock-entry — owner/admin, transactional stok girişi.
+ * POST /admin/lot-costing/stock-entry — owner/admin, ATOMİK stok girişi.
  *
  * GÜVENLİK: `LOT_COSTING_WRITE_ENABLED=true` olmadan 503 (varsayılan KAPALI →
  * gerçek sistemde stok girişi yapılmaz; yalnız test/fixture'ta açılır).
- * Idempotent (idempotency_key zaten varsa no-op). catalog_editor → 403.
+ * catalog_editor → 403.
  *
- * Akış (idempotent + fail-closed): plan üret → mevcut lot kontrol → PurchaseReceipt
- * + InventoryCostLot oluştur → Medusa inventory level artır. Hata → fail-closed
- * (kısmi kayıt bırakılmaz; çağıran retry edebilir).
+ * Yazım `createStockEntryWorkflow` ile yapılır: receipt + lot + inventory artışı
+ * + audit TEK workflow'da, her adım compensation'lı. Idempotency_key zaten varsa
+ * yeni kayıt/stok artışı YOK (no-op). Herhangi bir adım hata verirse önceki
+ * adımlar geri alınır (yarım kayıt bırakılmaz).
  */
 export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<void> {
   if (process.env.LOT_COSTING_WRITE_ENABLED !== "true") {
@@ -32,7 +29,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
   }
 
   const body = (req.body ?? {}) as Partial<StockEntryFull>
-  const plan = planStockEntry({
+  const entry: StockEntryFull = {
     product_id: String(body.product_id ?? ""),
     variant_id: String(body.variant_id ?? ""),
     received_quantity: Number(body.received_quantity ?? 0),
@@ -51,53 +48,30 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     currency: body.currency ?? "try",
     notes: body.notes ?? null,
     idempotency_key: String(body.idempotency_key ?? ""),
-  })
+  }
+  // Erken (anlaşılır) doğrulama; workflow da plan adımında tekrar doğrular.
+  const plan = planStockEntry(entry)
   if (!plan.ok || !plan.lot || !plan.receipt) {
     res.status(400).json({ message: "validation_failed", errors: plan.errors })
     return
   }
 
-  const service = req.scope.resolve<LotCostingService>(LOT_COSTING_MODULE)
-  const logger = req.scope.resolve(ContainerRegistrationKeys.LOGGER)
-
-  // Idempotency: aynı key ile lot varsa no-op.
-  const existing = (await service
-    .listInventoryCostLots({ idempotency_key: [plan.lot.idempotency_key] } as never, { take: 1 } as never)
-    .catch(() => [])) as Array<{ id: string }>
-  if (existing.length > 0) {
-    res.status(200).json({ idempotent_noop: true, lot_id: existing[0].id })
-    return
+  try {
+    const { result } = await createStockEntryWorkflow(req.scope).run({
+      input: { entry, actor_id: "owner" },
+    })
+    if (!result) {
+      res.status(200).json({ idempotent_noop: true })
+      return
+    }
+    res.status(201).json({
+      lot_id: result.lot_id,
+      receipt_id: result.receipt_id,
+      effective_unit_cost: plan.effective_unit_cost,
+      audit: result.audit,
+    })
+  } catch (e) {
+    // Compensation tüm kısmi yazımları geri alır; güvenli/anlaşılır mesaj.
+    res.status(422).json({ message: "stock_entry_failed_rolled_back", detail: e instanceof Error ? e.message : "unknown" })
   }
-
-  const receipt = (await service.createPurchaseReceipts(plan.receipt as never)) as { id: string }
-  const lot = (await service.createInventoryCostLots({
-    ...plan.lot,
-    purchase_receipt_id: receipt.id,
-  } as never)) as { id: string }
-
-  // Medusa inventory level artır (inventory_item_id + location verilmişse).
-  if (plan.lot.inventory_item_id && plan.lot.location_id) {
-    await updateInventoryLevelsWorkflow(req.scope).run({
-      input: {
-        updates: [
-          {
-            inventory_item_id: plan.lot.inventory_item_id,
-            location_id: plan.lot.location_id,
-            stocked_quantity: plan.inventory_delta,
-          },
-        ],
-      },
-    }).catch((e) => logger.warn(`[lot-costing] inventory level update skipped: ${e instanceof Error ? e.message : e}`))
-  }
-
-  const audit = buildAuditEntry({
-    actor_id: "owner",
-    action: "stock_entry",
-    entity: "inventory_cost_lot",
-    entity_id: lot.id,
-    after: { ...plan.lot },
-    idempotency_key: plan.lot.idempotency_key,
-  })
-
-  res.status(201).json({ lot_id: lot.id, receipt_id: receipt.id, effective_unit_cost: plan.effective_unit_cost, audit })
 }
