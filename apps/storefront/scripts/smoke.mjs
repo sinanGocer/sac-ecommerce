@@ -76,14 +76,22 @@ async function main() {
   log(count === EXPECTED_PRODUCTS, `Store API visible products = ${EXPECTED_PRODUCTS} (got ${count})`)
 
   const pages = []
-  for (const off of [0, 10, 20, 30]) {
+  const offsets = Array.from(
+    { length: Math.ceil(EXPECTED_PRODUCTS / 10) },
+    (_, i) => i * 10
+  )
+  for (const off of offsets) {
     try {
       pages.push((await storeApi(`limit=10&offset=${off}&fields=handle`)).products.length)
     } catch {
       pages.push(-1)
     }
   }
-  log(JSON.stringify(pages) === JSON.stringify([10, 10, 10, 9]), `pagination 10+10+10+9 (got ${pages.join("+")})`)
+  const expectedPages = offsets.map((off) => Math.min(10, Math.max(EXPECTED_PRODUCTS - off, 0)))
+  log(
+    JSON.stringify(pages) === JSON.stringify(expectedPages),
+    `pagination ${expectedPages.join("+")} (got ${pages.join("+")})`
+  )
 
   // 3) First & last product pages 200
   let first, last

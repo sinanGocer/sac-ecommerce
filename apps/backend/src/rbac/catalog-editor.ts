@@ -42,11 +42,16 @@ const CATALOG_EDITOR_BLOCKED_PREFIXES = [
   "/admin/rbac",
   "/admin/stores",
   "/admin/regions",
+  "/admin/sales-channels",
   "/admin/shipping",
   "/admin/shipping-options",
   "/admin/shipping-profiles",
   "/admin/shipping-option-types",
   "/admin/stock-locations",
+  "/admin/fulfillment-providers",
+  "/admin/fulfillment-sets",
+  "/admin/payment-providers",
+  "/admin/tax-providers",
   "/admin/customer-messaging",
 ]
 
@@ -97,7 +102,7 @@ function roleValuesFromAuthContext(authContext?: AuthContext): string[] {
   })
 }
 
-async function roleNamesFromDatabase(
+async function roleValuesFromRoleIds(
   req: MedusaRequest,
   roleIds: string[]
 ): Promise<string[]> {
@@ -134,12 +139,58 @@ async function roleNamesFromDatabase(
   }
 }
 
+async function roleValuesFromCurrentUser(req: MedusaRequest): Promise<string[]> {
+  const authContext = (req as MedusaRequest & { auth_context?: AuthContext })
+    .auth_context
+
+  if (authContext?.actor_type !== "user" || !authContext.actor_id) {
+    return []
+  }
+
+  try {
+    const query = req.scope?.resolve(ContainerRegistrationKeys.QUERY) as
+      | {
+          graph: (input: {
+            entity: string
+            fields: string[]
+            filters: { id: string }
+          }) => Promise<{
+            data?: Array<{
+              rbac_roles?: Array<{ id?: string; name?: string }>
+            }>
+          }>
+        }
+      | undefined
+
+    if (!query?.graph) {
+      return []
+    }
+
+    const { data } = await query.graph({
+      entity: "user",
+      fields: ["rbac_roles.id", "rbac_roles.name"],
+      filters: { id: authContext.actor_id },
+    })
+
+    return (data?.[0]?.rbac_roles ?? []).flatMap((role) => [
+      role.id,
+      role.name,
+    ]).filter((value): value is string => typeof value === "string")
+  } catch {
+    return []
+  }
+}
+
 export async function resolveRoleKeys(req: MedusaRequest): Promise<Set<string>> {
   const authContext = (req as MedusaRequest & { auth_context?: AuthContext })
     .auth_context
-  const roleValues = roleValuesFromAuthContext(authContext)
+  const tokenRoleValues = roleValuesFromAuthContext(authContext)
+  const currentUserRoleValues = await roleValuesFromCurrentUser(req)
+  const roleValues = currentUserRoleValues.length > 0
+    ? currentUserRoleValues
+    : tokenRoleValues
   const roleIds = roleValues.filter((role) => role.startsWith("role_"))
-  const dbRoleValues = await roleNamesFromDatabase(req, roleIds)
+  const dbRoleValues = await roleValuesFromRoleIds(req, roleIds)
   const keys = new Set<string>()
 
   for (const value of [...roleValues, ...dbRoleValues]) {

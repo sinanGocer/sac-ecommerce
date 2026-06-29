@@ -16,6 +16,13 @@ export interface ImportFingerprintPayload {
     external_id: string | null
     canonical_url: string | null
     matched_product_id: string | null
+    title: string | null
+    price_try: number | null
+    sku: string | null
+    ean: string | null
+    volume: string | null
+    images: string[]
+    source_category: string | null
   }>
 }
 
@@ -35,6 +42,13 @@ export function buildImportFingerprintPayload(
       external_id: i.external_id,
       canonical_url: i.canonical_url,
       matched_product_id: i.matched_product_id,
+      title: i.title,
+      price_try: i.price_try,
+      sku: i.sku,
+      ean: i.ean,
+      volume: i.volume,
+      images: [...i.images].sort(),
+      source_category: i.source_category,
     })),
   }
 }

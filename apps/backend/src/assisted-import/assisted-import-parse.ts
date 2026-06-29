@@ -76,6 +76,11 @@ export function parseCsv(content: string): ImportInputRecord[] {
   const iPrice = idx("price")
   const iSku = idx("sku")
   const iEan = idx("ean")
+  const iImage = idx("image")
+  const iVolume = idx("volume")
+  const iCategory = idx("category")
+  const iClassification = idx("classification")
+  const iSourceFile = idx("source_file")
 
   // Başlık yoksa (ilk satır url ise) header'sız mod.
   const hasHeader = iUrl !== -1 || iTitle !== -1
@@ -92,6 +97,13 @@ export function parseCsv(content: string): ImportInputRecord[] {
       price: parsePrice(hasHeader ? get(iPrice) : cols[2]),
       sku: (hasHeader ? get(iSku) : cols[3]) || null,
       ean: (hasHeader ? get(iEan) : cols[4]) || null,
+      images: (hasHeader ? get(iImage) : undefined)
+        ? [get(iImage)!]
+        : null,
+      volume: (hasHeader ? get(iVolume) : undefined) || null,
+      category: (hasHeader ? get(iCategory) : undefined) || null,
+      classification: (hasHeader ? get(iClassification) : undefined) || null,
+      source_file: (hasHeader ? get(iSourceFile) : undefined) || null,
       html: null,
       ref: `csv:row:${i + 1}`,
     }

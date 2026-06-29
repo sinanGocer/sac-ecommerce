@@ -47,6 +47,9 @@ export interface ImportInputRecord {
   /** Enriched kaynaklarda (kategori JSON) doğrudan gelen görseller/hacim. */
   images?: string[] | null
   volume?: string | null
+  category?: string | null
+  classification?: string | null
+  source_file?: string | null
   /** Girişteki ham satır/dosya referansı (audit). */
   ref: string
 }
@@ -108,6 +111,12 @@ export interface PlannedImportItem {
   title: string | null
   matched_product_id: string | null
   reasons: string[]
+  images: string[]
+  price_try: number | null
+  sku: string | null
+  ean: string | null
+  volume: string | null
+  source_category: string | null
   /** Dry-run: her zaman 0. */
   db_writes: 0
 }
@@ -116,3 +125,5 @@ export type AssistedImportDecision =
   | "ASSISTED_IMPORT_DRY_RUN_READY"
   | "ASSISTED_IMPORT_EMPTY_INPUT"
   | "ASSISTED_IMPORT_BLOCKED"
+  | "ASSISTED_IMPORT_COMMIT_READY"
+  | "IDEMPOTENT_NOOP"

@@ -125,7 +125,7 @@ export function extractFromRecord(rec: ImportInputRecord): ExtractedProduct {
     sku: rec.sku,
     ean: rec.ean,
     volume: rec.volume ?? parseVolume(rec.title),
-    category: null,
+    category: rec.category ?? null,
     ref: rec.ref,
   })
 }

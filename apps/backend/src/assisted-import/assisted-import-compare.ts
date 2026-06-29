@@ -134,6 +134,12 @@ function plan(
     title: ex.title,
     matched_product_id: matchedId,
     reasons,
+    images: ex.images,
+    price_try: ex.price_try,
+    sku: ex.sku,
+    ean: ex.ean,
+    volume: ex.volume,
+    source_category: ex.category,
     db_writes: 0,
   }
 }

@@ -60,7 +60,11 @@ function run() {
   ok(denied(allow("GET", "/admin/api-keys")), "api keys denied")
   ok(denied(allow("GET", "/admin/stores")), "settings denied")
   ok(denied(allow("GET", "/admin/regions")), "regions denied")
+  ok(denied(allow("GET", "/admin/sales-channels")), "channels denied")
   ok(denied(allow("GET", "/admin/shipping-options")), "shipping denied")
+  ok(denied(allow("GET", "/admin/fulfillment-providers")), "fulfillment providers denied")
+  ok(denied(allow("GET", "/admin/payment-providers")), "payment providers denied")
+  ok(denied(allow("GET", "/admin/tax-providers")), "tax providers denied")
   ok(denied(allow("GET", "/admin/customer-messaging/templates")), "custom admin mutation area denied")
   ok(denied(allow("GET", "/admin/workflows-executions")), "unknown admin area default denied")
 
