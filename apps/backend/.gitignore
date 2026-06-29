@@ -46,6 +46,9 @@ build
 # Catalog Product Quarantine — izole test derleme çıktısı
 /.catalog-quarantine-test-build
 
+# Catalog Editor RBAC — izole test derleme çıktısı
+/.catalog-editor-rbac-test-build
+
 # Salon Seed Cleanup — dry-run raporları
 /salon-seed-cleanup-reports
 

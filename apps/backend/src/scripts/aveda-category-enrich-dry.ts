@@ -11,6 +11,7 @@ import {
   summarizeEnrichment,
   toEnrichedCsv,
 } from "../assisted-import/category-enrich"
+import { aggregateDiscovery } from "../assisted-import/category-discovery"
 import { ExistingProductRef, ImportInputRecord } from "../assisted-import/assisted-import-policy"
 import { planAssistedImport } from "../assisted-import/assisted-import-service"
 
@@ -94,6 +95,25 @@ export default async function categoryEnrichDry({ container }: ExecArgs) {
   }))
   const importPlan = planAssistedImport({ records, existing: existingRefs })
 
+  // ── Missing CSV: keşfedilen URL var ama kart verisi yok (cross-link vb.) ──
+  const MISSING_CSV = "import-input/aveda-missing-product-input.csv"
+  const discovery = aggregateDiscovery(files)
+  const enrichedIds = new Set(allEnriched.map((e) => e.external_id).filter((x): x is string => !!x))
+  const missing = discovery.links.filter(
+    (l) => !enrichedIds.has(l.external_id) && !existingExternalIds.has(l.external_id)
+  )
+  const missingHeader = "url,external_id,title,price,sku,ean,image,volume,source_file,note"
+  const missingRows = missing.map((l) =>
+    [l.canonical_url, l.external_id, "", "", "", "", "", "", l.source_file, "fill_from_product_page"]
+      .map((v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v)))
+      .join(",")
+  )
+  await fs.writeFile(
+    path.resolve(process.cwd(), MISSING_CSV),
+    [missingHeader, ...missingRows].join("\n") + "\n",
+    "utf-8"
+  )
+
   const finishedAt = new Date().toISOString()
   const report = {
     run_id: `enr_${Date.now().toString(36)}`,
@@ -128,5 +148,6 @@ export default async function categoryEnrichDry({ container }: ExecArgs) {
   logger.info(`new_classification=${JSON.stringify(newSummary)}`)
   logger.info(`assisted_import: decision=${importPlan.decision} summary=${JSON.stringify(importPlan.summary)} db_writes=${importPlan.total_db_writes}`)
   logger.info(`CSV: ${OUTPUT_CSV}  (db_writes=0)`)
+  logger.info(`Missing CSV (kart verisi olmayan ${missing.length} URL): ${MISSING_CSV}`)
   logger.info("Rapor: assisted-import-reports/category-enrich-latest.json")
 }

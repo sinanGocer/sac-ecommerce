@@ -5,6 +5,7 @@ import {
   createRbacPoliciesWorkflow,
   createRbacRolePoliciesWorkflow,
   createRbacRolesWorkflow,
+  removeUserRolesWorkflow,
 } from "@medusajs/medusa/core-flows"
 
 import {
@@ -30,17 +31,73 @@ export default async function catalogEditorRbacSetup({ container }: ExecArgs) {
   const userId = process.env.CATALOG_EDITOR_USER_ID?.trim() || null
   const actorId = process.env.CATALOG_EDITOR_ACTOR_ID?.trim() || "system"
 
-  const { data: roles } = await query.graph({
-    entity: "rbac_role",
-    fields: ["id", "name"],
-    filters: {},
-  })
+  // RBAC modülü etkin değilse rbac_role sorgusu hata verir → fail-safe.
+  let roles: RoleRow[] | undefined
+  let rbacAvailable = true
+  try {
+    const res = await query.graph({ entity: "rbac_role", fields: ["id", "name"], filters: {} })
+    roles = (res.data ?? []) as RoleRow[]
+  } catch {
+    rbacAvailable = false
+    roles = []
+    logger.warn(
+      "[rbac] Medusa RBAC modülü etkin değil (rbac_role servisi yok). Rol oluşturma/atama için RBAC modülünü medusa-config'de etkinleştirin. Enforcement guard (catalog-editor.ts) ayrıca testlerle doğrulanır."
+    )
+  }
   let role =
     ((roles ?? []) as RoleRow[]).find(
       (row) =>
         row.id === CATALOG_EDITOR_ROLE_ID ||
         row.name === catalogEditorRoleDefinition.name
     ) ?? null
+
+  const action = (process.env.CATALOG_EDITOR_RBAC_ACTION?.trim() || "setup").toLowerCase()
+
+  // ── list: admin kullanıcılarını + rolleri listele (READ-ONLY, ID bulmak için) ──
+  if (action === "list") {
+    const { data: users } = await query.graph({
+      entity: "user",
+      fields: ["id", "email", "first_name", "last_name"],
+      filters: {},
+    })
+    logger.info("──────── CATALOG EDITOR RBAC — LIST (read-only) ────────")
+    logger.info(`admin_users=${(users ?? []).length}`)
+    for (const u of (users ?? []) as Array<{ id: string; email?: string }>) {
+      logger.info(`  user ${u.id}  ${u.email ?? "-"}`)
+    }
+    logger.info(`rbac_roles=${(roles ?? []).length}`)
+    for (const r of (roles ?? []) as RoleRow[]) {
+      logger.info(`  role ${r.id}  ${r.name ?? "-"}${r.id === role?.id ? "  <- catalog_editor" : ""}`)
+    }
+    logger.info(`catalog_editor_role_exists=${Boolean(role)}`)
+    logger.info("Atama: CATALOG_EDITOR_RBAC_COMMIT=true CATALOG_EDITOR_USER_ID=<user_id> npm run catalog:editor-rbac:setup")
+    return
+  }
+
+  // ── remove: kullanıcıdan catalog_editor rolünü kaldır (dry-run varsayılan) ──
+  if (action === "remove") {
+    if (!role) {
+      logger.warn("[rbac] catalog_editor rolü yok; kaldırılacak bir şey yok.")
+      return
+    }
+    if (!userId) {
+      logger.warn("[rbac] CATALOG_EDITOR_USER_ID gerekli (kaldırılacak kullanıcı).")
+      return
+    }
+    let removed = false
+    if (commit) {
+      await removeUserRolesWorkflow(container).run({
+        input: { actor_id: actorId, actor: "user", user_id: userId, role_ids: [role.id] },
+      })
+      removed = true
+    }
+    logger.info("──────── CATALOG EDITOR RBAC — REMOVE ────────")
+    logger.info(`mode=${commit ? "commit" : "dry-run"} user=${userId} role=${role.id} removed=${removed}`)
+    if (!commit) {
+      logger.info("Kaldırmak için: CATALOG_EDITOR_RBAC_ACTION=remove CATALOG_EDITOR_RBAC_COMMIT=true CATALOG_EDITOR_USER_ID=<user_id> npm run catalog:editor-rbac:setup")
+    }
+    return
+  }
 
   if (!role && commit) {
     const { result } = await createRbacRolesWorkflow(container).run({
