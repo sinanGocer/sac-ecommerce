@@ -1,6 +1,11 @@
 import { loadEnv, defineConfig, Modules } from '@medusajs/framework/utils'
 
+import { validateRequiredEnv } from './src/lib/validate-env'
+
 loadEnv(process.env.NODE_ENV || 'development', process.cwd())
+
+// Production'da eksik/zayıf kritik env değişkenleri için fail-fast (dev'de uyarı).
+validateRequiredEnv()
 
 type MedusaModuleConfig = {
   resolve: string

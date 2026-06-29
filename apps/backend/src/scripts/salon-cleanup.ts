@@ -15,10 +15,28 @@ import {
  *  - Demo kategoriler (Shirts, Sweatshirts, Pants, Merch)
  *
  * Güvenli: bulamadıklarını atlar. Salon ürün/kategorilerine dokunmaz.
+ *
+ * ⚠️ HARD DELETE: Bu araç deleteProductsWorkflow/deleteProductCategoriesWorkflow
+ * çağırır. Yanlışlıkla çalıştırmayı önlemek için fail-closed onay gerekir:
+ *   SALON_DEMO_CLEANUP_CONFIRM=DELETE_CREATE_MEDUSA_DEMO_DATA
+ * Onay verilmezse hiçbir şey silinmez (erken çıkış). Hiçbir npm script bunu
+ * çağırmaz; yalnız bilinçli `medusa exec` ile çalıştırılmalıdır.
  */
+const SALON_DEMO_CLEANUP_CONFIRM_TOKEN = "DELETE_CREATE_MEDUSA_DEMO_DATA"
+
 export default async function salonCleanup({ container }: ExecArgs) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
+
+  // Fail-closed: açık onay olmadan hard delete yapılmaz.
+  if (process.env.SALON_DEMO_CLEANUP_CONFIRM !== SALON_DEMO_CLEANUP_CONFIRM_TOKEN) {
+    logger.warn(
+      `[salon-cleanup] Fail-closed: bu araç create-medusa-app demo verisini HARD DELETE eder. ` +
+        `Çalıştırmak için SALON_DEMO_CLEANUP_CONFIRM=${SALON_DEMO_CLEANUP_CONFIRM_TOKEN} gerekir. ` +
+        `Hiçbir şey silinmedi.`
+    )
+    return
+  }
 
   const demoProductHandles = ["t-shirt", "sweatshirt", "sweatpants", "shorts"]
   const demoCategoryNames = ["Shirts", "Sweatshirts", "Pants", "Merch"]
