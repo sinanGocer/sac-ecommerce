@@ -67,6 +67,7 @@ build
 /assisted-import-reports
 /.assisted-import-test-build
 /.category-discovery-test-build
+/.category-enrich-test-build
 
 # User-Assisted Import — kullanıcı giriş dosyaları + üretilen çıktı (örnek/README hariç)
 /import-input/*.txt

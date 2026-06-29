@@ -120,11 +120,11 @@ export function extractFromRecord(rec: ImportInputRecord): ExtractedProduct {
     canonical_url: v.canonical_url,
     title: rec.title,
     description: null,
-    images: [],
+    images: (rec.images ?? []).filter((s): s is string => typeof s === "string" && s.length > 0),
     price_try: rec.price,
     sku: rec.sku,
     ean: rec.ean,
-    volume: parseVolume(rec.title),
+    volume: rec.volume ?? parseVolume(rec.title),
     category: null,
     ref: rec.ref,
   })

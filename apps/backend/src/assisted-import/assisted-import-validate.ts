@@ -27,15 +27,17 @@ function pathSegments(url: string): string[] | null {
 }
 
 /**
- * Aveda TR ürün URL'i: /product/{externalId}/{id2}/{kategori}/{altkategori}/{slug}
- * external_id = "product" segmentinden sonraki ilk id.
+ * Aveda TR ürün URL'i: /product/{masterId}/{externalId}/{kategori}/{altkategori}/{slug}
+ * external_id = "product" segmentinden sonraki İKİNCİ id. (İlk id paylaşılan
+ * master/category id'dir; mevcut 39 ürün metadata.external_id = ikinci id ile
+ * eşleşir; örn /product/22901/62004/... → 62004.)
  */
 export function extractExternalId(url: string): string | null {
   const parts = pathSegments(url)
   if (!parts) return null
   const idx = parts.indexOf("product")
-  if (idx === -1 || idx + 1 >= parts.length) return null
-  const id = parts[idx + 1]
+  if (idx === -1 || idx + 2 >= parts.length) return null
+  const id = parts[idx + 2]
   return /^[A-Za-z0-9_-]+$/.test(id) ? id : null
 }
 

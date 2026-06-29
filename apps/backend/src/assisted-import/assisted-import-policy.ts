@@ -44,6 +44,9 @@ export interface ImportInputRecord {
   ean: string | null
   /** Kaydedilmiş HTML içeriği (html formatında doldurulur). */
   html: string | null
+  /** Enriched kaynaklarda (kategori JSON) doğrudan gelen görseller/hacim. */
+  images?: string[] | null
+  volume?: string | null
   /** Girişteki ham satır/dosya referansı (audit). */
   ref: string
 }

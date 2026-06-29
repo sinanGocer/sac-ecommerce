@@ -7,6 +7,7 @@ import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import {
   aggregateDiscovery,
   compareDiscovery,
+  discoverFromHtml,
   toCsv,
 } from "../assisted-import/category-discovery"
 
@@ -53,6 +54,13 @@ export default async function categoryDiscoveryDry({ container }: ExecArgs) {
     }
   }
 
+  // Dosya başına bulunan ürün (dosya-içi tekilleştirilmiş) — audit.
+  const perFile = files.map((f) => ({
+    file: f.source_file,
+    found: discoverFromHtml(f.html, f.source_file).links.length,
+    rejected: discoverFromHtml(f.html, f.source_file).rejected.length,
+  }))
+
   const agg = aggregateDiscovery(files)
 
   // Mevcut ürünlerin external_id'leri (read-only).
@@ -79,6 +87,7 @@ export default async function categoryDiscoveryDry({ container }: ExecArgs) {
     input_dir: inputDir,
     html_files: htmlFiles,
     html_file_count: files.length,
+    per_file_counts: perFile,
     discovered_unique_products: agg.links.length,
     duplicate_external_ids: agg.duplicate_external_ids,
     rejected_links: agg.rejected.slice(0, 50),

@@ -68,7 +68,7 @@ function main(): void {
   ok(planUpdate2.items[0].category === "update", "13 complete + matched → update")
 
   // new product (complete, not existing)
-  const html2 = html.replace("102001", "109999").replace("onarici-keratin-sampuani", "yeni-urun").replace("Onarıcı Keratin Şampuanı 200 ml", "Yeni Ürün 100 ml")
+  const html2 = html.replace(/102001/g, "109999").replace("onarici-keratin-sampuani", "yeni-urun").replace("Onarıcı Keratin Şampuanı 200 ml", "Yeni Ürün 100 ml")
   const planNew = planAssistedImport({ records: [{ source_format: "html", url: null, title: null, price: null, sku: null, ean: null, html: html2, ref: "h2" }], existing })
   ok(planNew.items[0].category === "new", "14 complete + not existing → new")
 
