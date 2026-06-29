@@ -19,6 +19,9 @@ const modules: MedusaModuleConfig[] = [
   {
     resolve: "./src/modules/search-projection",
   },
+  {
+    resolve: "./src/modules/lot-costing",
+  },
 ]
 
 if (process.env.IYZICO_PROVIDER_ENABLED === "true") {
