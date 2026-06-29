@@ -63,14 +63,20 @@ build
 # Cimri Feed — izole test derleme çıktısı
 /.cimri-feed-test-build
 
-# User-Assisted Import — raporlar + izole test derleme çıktısı
+# User-Assisted Import — raporlar + izole test derleme çıktıları
 /assisted-import-reports
 /.assisted-import-test-build
+/.category-discovery-test-build
 
-# User-Assisted Import — kullanıcının gerçek giriş dosyaları (örnek hariç)
-/import-input/*
+# User-Assisted Import — kullanıcı giriş dosyaları + üretilen çıktı (örnek/README hariç)
+/import-input/*.txt
+/import-input/*.csv
+/import-input/*.html
 !/import-input/*.example.txt
 !/import-input/*.example.csv
+/import-input/aveda-discovered-products.csv
+/import-input/categories/*
+!/import-input/categories/README.md
 
 # Search Projection — izole test derleme çıktısı
 /.search-projection-test-build
