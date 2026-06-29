@@ -1,0 +1,20 @@
+{
+  "brand": {
+    "name": "Sinan Koçer Profesyonel",
+    "tagline": "Professional hair & care catalog management",
+    "catalogEditorHint": "In this panel you can manage products, categories, collections and inventory only.",
+    "ownerHint": "You have full management access."
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "loading": "Loading…",
+    "empty": "No records",
+    "required": "This field is required",
+    "saved": "Saved",
+    "error": "An error occurred"
+  }
+}

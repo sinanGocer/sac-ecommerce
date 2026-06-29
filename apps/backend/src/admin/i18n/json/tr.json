@@ -1,0 +1,20 @@
+{
+  "brand": {
+    "name": "Sinan Koçer Profesyonel",
+    "tagline": "Profesyonel saç & bakım kataloğu yönetimi",
+    "catalogEditorHint": "Bu panelde yalnızca ürün, kategori, koleksiyon ve stok yönetebilirsiniz.",
+    "ownerHint": "Tam yönetim erişiminiz var."
+  },
+  "common": {
+    "save": "Kaydet",
+    "cancel": "İptal",
+    "delete": "Sil",
+    "edit": "Düzenle",
+    "create": "Oluştur",
+    "loading": "Yükleniyor…",
+    "empty": "Kayıt yok",
+    "required": "Bu alan zorunludur",
+    "saved": "Kaydedildi",
+    "error": "Bir hata oluştu"
+  }
+}
