@@ -12,7 +12,8 @@ import { forecastDemand } from "../forecast"
 import { computeProfit } from "../profit"
 import { recommendPrice } from "../recommended-price"
 import { recommendReorder } from "../reorder"
-import { redactForRole, SENSITIVE_FIELDS } from "../redaction"
+import { redactForRole, SENSITIVE_FIELDS, viewerRoleFromKeys } from "../redaction"
+import { validateAndComputeStockEntry } from "../stock-entry"
 import { CostLot, PlanningPolicy, ProductPricingPolicy, DailySale } from "../inventory-costing-types"
 
 let passed = 0
@@ -123,6 +124,17 @@ function main(): void {
   const ownerView = redactForRole(row, "owner") as any
   ok(ownerView.effective_unit_cost === 140 && ownerView.net_profit === 100, "35 owner sees full cost")
   ok(SENSITIVE_FIELDS.includes("supplier_id") && SENSITIVE_FIELDS.includes("weighted_average_cost"), "36 sensitive field list")
+
+  // ── Stock entry (pure cost allocation) ──────────────────────────────────────
+  const se = validateAndComputeStockEntry({ product_id: "p", variant_id: "v", received_quantity: 100, unit_purchase_cost: 100, purchase_vat_rate: 0.2, allocated_shipping_cost: 500, allocated_additional_cost: 0, idempotency_key: "k1" })
+  ok(se.ok && se.effective_unit_cost === 105, "38 effective unit cost = 100 + 500/100")
+  const seBad = validateAndComputeStockEntry({ product_id: "p", variant_id: "v", received_quantity: 0, unit_purchase_cost: -1, purchase_vat_rate: 2, idempotency_key: "" })
+  ok(!seBad.ok && seBad.errors.includes("invalid_quantity") && seBad.errors.includes("missing_idempotency_key"), "39 stock entry validation fail-closed")
+
+  // ── Viewer role mapping ─────────────────────────────────────────────────────
+  ok(viewerRoleFromKeys(["catalog_editor"]) === "catalog_editor", "40 editor role")
+  ok(viewerRoleFromKeys(["admin"]) === "owner", "41 admin -> owner view")
+  ok(viewerRoleFromKeys([]) === "catalog_editor", "42 unknown -> safest (no cost)")
 
   // no raw SQL / no mutation guard
   const fs = require("fs") as typeof import("fs")

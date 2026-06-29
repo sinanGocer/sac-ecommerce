@@ -5,6 +5,14 @@
     "catalogEditorHint": "In this panel you can manage products, categories, collections and inventory only.",
     "ownerHint": "You have full management access."
   },
+  "lotCosting": {
+    "title": "Stock & Cost Lots",
+    "empty": "No cost lots yet. Add one via New Stock Entry.",
+    "lots": "Lots",
+    "stock": "Stock",
+    "costHidden": "Cost hidden",
+    "unvalued": "Cost missing"
+  },
   "common": {
     "save": "Save",
     "cancel": "Cancel",

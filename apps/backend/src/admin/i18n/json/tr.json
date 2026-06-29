@@ -5,6 +5,14 @@
     "catalogEditorHint": "Bu panelde yalnızca ürün, kategori, koleksiyon ve stok yönetebilirsiniz.",
     "ownerHint": "Tam yönetim erişiminiz var."
   },
+  "lotCosting": {
+    "title": "Stok ve Maliyet Partileri",
+    "empty": "Henüz maliyet partisi yok. Yeni Stok Girişi ile ekleyin.",
+    "lots": "Parti",
+    "stock": "Stok",
+    "costHidden": "Maliyet gizli",
+    "unvalued": "Maliyet Eksik"
+  },
   "common": {
     "save": "Kaydet",
     "cancel": "İptal",

@@ -38,6 +38,25 @@ export function canViewCost(role: ViewerRole): boolean {
   return role === "owner" || role === "admin"
 }
 
+/**
+ * RBAC role anahtarlarından görüntüleyici rolünü türetir. catalog_editor ise
+ * (owner/admin değilse) maliyet alanları redaksiyon görür. Owner/admin yoksa ve
+ * yalnız catalog_editor varsa → catalog_editor; aksi halde owner (tam) varsayımı
+ * yalnız owner/admin anahtarı görülürse uygulanır.
+ */
+export function viewerRoleFromKeys(roleKeys: Iterable<string>): ViewerRole {
+  const keys = new Set([...roleKeys].map((k) => k.toLowerCase()))
+  const isEditor =
+    keys.has("catalog_editor") || keys.has("role_catalog_editor") || keys.has("catalog editor")
+  const isOwner =
+    keys.has("owner") || keys.has("admin") || keys.has("super_admin") ||
+    keys.has("role_owner") || keys.has("role_admin") || keys.has("role_super_admin")
+  if (isOwner) return "owner"
+  if (isEditor) return "catalog_editor"
+  // Belirsizse en güvenli taraf: maliyet GÖSTERME.
+  return "catalog_editor"
+}
+
 /** catalog_editor: hassas alanları derinlemesine siler. owner/admin: değiştirmez. */
 export function redactForRole<T>(payload: T, role: ViewerRole): T {
   if (canViewCost(role)) return payload
