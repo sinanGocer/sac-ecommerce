@@ -14,6 +14,8 @@ import { recommendPrice } from "../recommended-price"
 import { recommendReorder } from "../reorder"
 import { redactForRole, SENSITIVE_FIELDS, viewerRoleFromKeys } from "../redaction"
 import { validateAndComputeStockEntry } from "../stock-entry"
+import { planFifoConsumption, planReversal, planStockEntry } from "../write-ops"
+import { buildAuditEntry } from "../audit"
 import { CostLot, PlanningPolicy, ProductPricingPolicy, DailySale } from "../inventory-costing-types"
 
 let passed = 0
@@ -135,6 +137,33 @@ function main(): void {
   ok(viewerRoleFromKeys(["catalog_editor"]) === "catalog_editor", "40 editor role")
   ok(viewerRoleFromKeys(["admin"]) === "owner", "41 admin -> owner view")
   ok(viewerRoleFromKeys([]) === "catalog_editor", "42 unknown -> safest (no cost)")
+
+  // ── Write-ops: stock entry plan ─────────────────────────────────────────────
+  const sep = planStockEntry({ product_id: "p", variant_id: "v", received_quantity: 100, unit_purchase_cost: 100, purchase_vat_rate: 0.2, allocated_shipping_cost: 500, location_id: "loc", supplier_name: "X", invoice_number: "INV1", lot_number: "LOT1", idempotency_key: "k1" })
+  ok(sep.ok && sep.lot?.effective_unit_cost === 105 && sep.lot?.remaining_quantity === 100 && sep.inventory_delta === 100, "43 stock entry plan: remaining=received, eff cost, inventory delta")
+  const sepBad = planStockEntry({ product_id: "p", variant_id: "v", received_quantity: 10, unit_purchase_cost: 100, purchase_vat_rate: 0.2, location_id: null as never, idempotency_key: "k2" })
+  ok(!sepBad.ok && sepBad.errors.includes("missing_location") && sepBad.errors.includes("missing_supplier"), "44 stock entry plan validation")
+
+  // ── Write-ops: FIFO consumption plan ────────────────────────────────────────
+  const fc = planFifoConsumption(lots, 25, "order_1:item_1")
+  ok(fc.ok && fc.allocations.length === 2 && fc.total_cost === 2700, "45 fifo consumption plan cost")
+  ok(fc.lot_decrements.find((d) => d.lot_id === "L1")?.new_remaining_quantity === 0, "46 lot decrement to 0")
+  ok(fc.allocations[0].idempotency_key === "order_1:item_1:L1", "47 per item+lot idempotency key")
+  const fcOver = planFifoConsumption(lots, 99999, "o:i")
+  ok(!fcOver.ok && fcOver.allocations.length === 0, "48 oversell consumption blocked")
+
+  // ── Write-ops: reversal plan + duplicate no-op ──────────────────────────────
+  const revPlan = planReversal(fc.allocations, false)
+  ok(revPlan.ok && revPlan.lot_restorations.reduce((s, r) => s + r.add_quantity, 0) === 25, "49 reversal restores 25")
+  ok(revPlan.reversal_rows.every((r) => r.allocation_type === "reversal"), "50 reversal rows typed")
+  const revDup = planReversal(fc.allocations, true)
+  ok(revDup.ok && revDup.reversal_rows.length === 0, "51 duplicate reversal no-op")
+
+  // ── Audit (PII/secret stripped) ─────────────────────────────────────────────
+  const audit = buildAuditEntry({ actor_id: "u1", action: "stock_entry", entity: "inventory_cost_lot", entity_id: "lot1", after: { effective_unit_cost: 105, email: "x@y.z", supplier_name: "S", password: "p" }, idempotency_key: "k1", now: "2026-06-29T00:00:00Z" })
+  ok(audit.after && (audit.after as any).effective_unit_cost === 105 && (audit.after as any).supplier_name === "S", "52 audit keeps business fields")
+  ok(audit.after && (audit.after as any).email === undefined && (audit.after as any).password === undefined, "53 audit strips PII/secret")
+  ok(audit.actor_id === "u1" && audit.idempotency_key === "k1" && audit.action === "stock_entry", "54 audit metadata")
 
   // no raw SQL / no mutation guard
   const fs = require("fs") as typeof import("fs")
